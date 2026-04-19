@@ -3,22 +3,29 @@ import Security
 
 enum Keychain {
     private static let service = "com.tutorly.apikey"
-    private static let account = "anthropic"
 
-    static func save(_ value: String) {
+    static func save(_ value: String)     { write(value, account: "anthropic") }
+    static func read() -> String?         { fetch(account: "anthropic") }
+    static func clear()                   { delete(account: "anthropic") }
+
+    static func saveOpenAI(_ value: String) { write(value, account: "openai") }
+    static func readOpenAI() -> String?     { fetch(account: "openai") }
+    static func clearOpenAI()               { delete(account: "openai") }
+
+    private static func write(_ value: String, account: String) {
         let data = Data(value.utf8)
-        let query: [String: Any] = [
+        let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
-        var add = query
+        SecItemDelete(base as CFDictionary)
+        var add = base
         add[kSecValueData as String] = data
         SecItemAdd(add as CFDictionary, nil)
     }
 
-    static func read() -> String? {
+    private static func fetch(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -27,15 +34,12 @@ enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let str = String(data: data, encoding: .utf8)
-        else { return nil }
-        return str
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
-    static func clear() {
+    private static func delete(account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

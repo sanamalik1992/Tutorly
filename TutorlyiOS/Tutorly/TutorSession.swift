@@ -3,36 +3,71 @@ import SwiftUI
 
 @Observable
 final class TutorSession {
+
+    // MARK: - UI state
+
     var mode: TutorMode = .teach
     var subject: String = ""
     var messages: [ChatMessage] = []
-    var isThinking = false
+    var isThinking  = false
     var errorMessage: String?
-    var handsFree: Bool = false
+    var handsFree   = false
 
+    // Whiteboard bridge — shared by both the Anthropic and Realtime paths
     var pendingDrawBlock: DrawBlock?
     var drawTick: Int = 0
     var clearBoardTrigger: Int = 0
 
+    // MARK: - Services
+
+    let realtimeSession = RealtimeSession()
+
+    // Anthropic pipeline — kept for reference / fallback, not used when Realtime is connected
+    let recognizer = SpeechRecognizer()
+    let synth       = SpeechSynthesizer()
+    private let client = AnthropicClient()
     private let maxHistory = 20
 
-    let recognizer = SpeechRecognizer()
-    let synth = SpeechSynthesizer()
-    private let client = AnthropicClient()
+    // MARK: - Init
+
+    init() {
+        // Wire realtime draw calls into the shared whiteboard bridge
+        realtimeSession.onDraw = { [weak self] block in
+            guard let self else { return }
+            Task { @MainActor in
+                self.pendingDrawBlock = block
+                self.drawTick &+= 1
+            }
+        }
+        realtimeSession.connect()
+    }
+
+    // MARK: - Preset sessions
+
+    func startPresetSession(_ topic: String) {
+        subject = topic
+        let prompt = mode == .quiz ? "Quiz me on \(topic)." : "Teach me about \(topic)."
+        if realtimeSession.isConnected {
+            realtimeSession.sendText(prompt)
+        } else {
+            Task { @MainActor in await sendViaAnthropic(prompt) }
+        }
+    }
+
+    // MARK: - Anthropic fallback path (kept but unused when Realtime is connected)
 
     @MainActor
-    func send(_ text: String) async {
+    func sendViaAnthropic(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !isThinking else { return }
 
         messages.append(ChatMessage(role: .user, content: trimmed))
-        isThinking = true
+        isThinking   = true
         errorMessage = nil
 
         do {
             let history = Array(messages.suffix(maxHistory))
             let reply = try await client.chat(messages: history, mode: mode, subject: subject)
-
             let spoken = reply.spoken.isEmpty ? "(no reply)" : reply.spoken
             messages.append(ChatMessage(role: .assistant, content: spoken))
             isThinking = false
@@ -41,11 +76,8 @@ final class TutorSession {
                 pendingDrawBlock = draw
                 drawTick &+= 1
             }
-
             if !reply.spoken.isEmpty {
-                synth.speak(cleanForSpeech(spoken)) { [weak self] in
-                    self?.maybeRestartMic()
-                }
+                synth.speak(cleanForSpeech(spoken)) { [weak self] in self?.maybeRestartMic() }
             } else {
                 maybeRestartMic()
             }
@@ -57,34 +89,24 @@ final class TutorSession {
     }
 
     func startListening() {
-        guard recognizer.isAuthorized else {
-            Task { await recognizer.requestAuthorization() }
-            return
-        }
+        guard recognizer.isAuthorized else { Task { await recognizer.requestAuthorization() }; return }
         synth.stop()
         recognizer.start { [weak self] final in
             guard let self else { return }
-            Task { @MainActor in await self.send(final) }
+            Task { @MainActor in await self.sendViaAnthropic(final) }
         }
     }
 
-    func stopListening() { recognizer.stop() }
-    func stopSpeaking()  { synth.stop() }
+    func stopListening()  { recognizer.stop() }
+    func stopSpeaking()   { synth.stop() }
 
     func newSession() {
-        synth.stop()
-        recognizer.stop()
+        synth.stop(); recognizer.stop()
         messages.removeAll()
         clearBoardTrigger &+= 1
     }
 
     func clearBoard() { clearBoardTrigger &+= 1 }
-
-    func startPresetSession(_ topic: String) {
-        subject = topic
-        let prompt = mode == .quiz ? "Quiz me on \(topic)." : "Teach me about \(topic)."
-        Task { @MainActor in await send(prompt) }
-    }
 
     private func maybeRestartMic() {
         guard handsFree, recognizer.isAuthorized else { return }
@@ -94,21 +116,15 @@ final class TutorSession {
         }
     }
 
-    // Strip emoji and markdown before passing to TTS — they get read aloud verbatim.
     private func cleanForSpeech(_ text: String) -> String {
-        var result = text
-        // Safety net: strip any <draw> block that slipped through
-        if let s = result.range(of: "<draw>"),
-           let e = result.range(of: "</draw>", range: s.upperBound..<result.endIndex) {
-            result = String(result[result.startIndex..<s.lowerBound]) +
-                     String(result[e.upperBound..<result.endIndex])
+        var r = text
+        if let s = r.range(of: "<draw>"), let e = r.range(of: "</draw>", range: s.upperBound..<r.endIndex) {
+            r = String(r[r.startIndex..<s.lowerBound]) + String(r[e.upperBound..<r.endIndex])
         }
-        // Remove emoji (Unicode scalars with emoji presentation)
-        result = String(result.unicodeScalars.filter { !$0.properties.isEmojiPresentation })
-        // Remove markdown asterisks and hash-headers
-        result = result
+        r = String(r.unicodeScalars.filter { !$0.properties.isEmojiPresentation })
+        return r
             .replacingOccurrences(of: #"\*+"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"#+\s*"#, with: "", options: .regularExpression)
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

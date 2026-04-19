@@ -2,8 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(TutorSession.self) private var session
-    @State private var textInput: String = ""
-    @State private var showSettings = false
+    @State private var textInput = ""
+    @State private var showSettings  = false
     @State private var showTranscript = false
     @FocusState private var textFocused: Bool
 
@@ -19,82 +19,69 @@ struct ContentView: View {
             Theme.bg.ignoresSafeArea()
             backgroundGlow.ignoresSafeArea()
 
-            VStack(spacing: 12) {
+            VStack(spacing: 0) {
                 header
-                modeAndSubjectBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 10)
+
+                controlsBar
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
                 Whiteboard()
+                    .padding(.horizontal, 16)
                     .frame(maxHeight: .infinity)
+
                 voiceBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
         }
-        .sheet(isPresented: $showSettings) { SettingsSheet() }
+        .sheet(isPresented: $showSettings)  { SettingsSheet() }
         .sheet(isPresented: $showTranscript) { TranscriptSheet() }
-        .alert("Error",
-               isPresented: Binding(
-                get: { session.errorMessage != nil },
-                set: { if !$0 { session.errorMessage = nil } })
-        ) {
-            Button("OK") { session.errorMessage = nil }
+        .alert("Error", isPresented: Binding(
+            get: { session.errorMessage != nil || session.realtimeSession.errorMessage != nil },
+            set: { if !$0 { session.errorMessage = nil; session.realtimeSession.errorMessage = nil } }
+        )) {
+            Button("OK") { session.errorMessage = nil; session.realtimeSession.errorMessage = nil }
         } message: {
-            Text(session.errorMessage ?? "")
+            Text(session.errorMessage ?? session.realtimeSession.errorMessage ?? "")
         }
     }
 
-    // MARK: - Background
+    // MARK: - Background glow
 
     private var backgroundGlow: some View {
         ZStack {
-            Circle()
-                .fill(Theme.navy.opacity(0.07))
-                .frame(width: 500)
-                .blur(radius: 90)
-                .offset(x: -160, y: -260)
-            Circle()
-                .fill(Theme.teal.opacity(0.09))
-                .frame(width: 420)
-                .blur(radius: 80)
-                .offset(x: 180, y: 260)
-            Circle()
-                .fill(Theme.amber.opacity(0.06))
-                .frame(width: 320)
-                .blur(radius: 70)
-                .offset(x: 40, y: 80)
+            Circle().fill(Theme.navy.opacity(0.07)).frame(width: 500).blur(radius: 90).offset(x: -160, y: -260)
+            Circle().fill(Theme.teal.opacity(0.08)).frame(width: 400).blur(radius: 80).offset(x: 180, y: 260)
+            Circle().fill(Theme.amber.opacity(0.06)).frame(width: 300).blur(radius: 70).offset(x: 40, y: 80)
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header (brand + icons only — no toggles)
 
     private var header: some View {
-        @Bindable var session = session
-        return HStack(spacing: 12) {
+        HStack(spacing: 12) {
+            // Brand mark
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Theme.brandGradient)
-                    .frame(width: 40, height: 40)
-                    .shadow(color: Theme.navy.opacity(0.3), radius: 8, x: 0, y: 3)
+                    .frame(width: 38, height: 38)
+                    .shadow(color: Theme.navy.opacity(0.28), radius: 8, x: 0, y: 3)
                 Text("T")
-                    .font(.serif(21, weight: .heavy))
+                    .font(.system(size: 20, weight: .heavy, design: .rounded))
                     .foregroundStyle(Theme.paper)
-                Circle()
-                    .fill(Theme.amber)
-                    .frame(width: 6, height: 6)
-                    .offset(x: 12, y: -12)
+                Circle().fill(Theme.amber).frame(width: 6, height: 6).offset(x: 11, y: -11)
             }
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 1) {
-                    Text("Tutor")
-                        .font(.serif(24, weight: .heavy))
-                        .foregroundStyle(Theme.ink)
-                    Text("ly")
-                        .font(.serif(24, weight: .regular))
-                        .italic()
-                        .foregroundStyle(Theme.navy)
-                    Text(".")
-                        .font(.serif(24, weight: .heavy))
-                        .foregroundStyle(Theme.amber)
+                    Text("Tutor").font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundStyle(Theme.ink)
+                    Text("ly").font(.system(size: 22, weight: .regular, design: .rounded)).italic().foregroundStyle(Theme.navy)
+                    Text(".").font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundStyle(Theme.amber)
                 }
                 Text("let's learn together")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
@@ -103,21 +90,19 @@ struct ContentView: View {
 
             Spacer()
 
-            Toggle(isOn: $session.handsFree) {
-                Text("Hands-free")
-                    .font(.mono(10, weight: .semibold))
-                    .kerning(1.0)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Theme.inkSoft)
-            }
-            .toggleStyle(CompactToggleStyle())
+            // Connection dot
+            Circle()
+                .fill(session.realtimeSession.isConnected ? Theme.teal : Theme.line)
+                .frame(width: 8, height: 8)
 
             Button { showTranscript = true } label: {
                 Image(systemName: "text.alignleft")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.inkSoft)
                     .frame(width: 34, height: 34)
-                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line))
+                    .background(.ultraThinMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
             Button { showSettings = true } label: {
@@ -125,58 +110,66 @@ struct ContentView: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.inkSoft)
                     .frame(width: 34, height: 34)
-                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line))
+                    .background(.ultraThinMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(.top, 8)
     }
 
-    // MARK: - Mode + subject bar
+    // MARK: - Controls bar (mode, subject, chips — all full-width, no clipping)
 
-    private var modeAndSubjectBar: some View {
+    private var controlsBar: some View {
         @Bindable var session = session
-        return VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                HStack(spacing: 0) {
-                    modeButton(.teach)
-                    modeButton(.quiz)
-                }
-                .background(Theme.paper)
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.ink, lineWidth: 1.5))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .frame(maxWidth: 220)
-
-                HStack(spacing: 8) {
-                    Image(systemName: "book.closed")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.inkFaint)
-                    TextField("Subject or topic…", text: $session.subject)
-                        .font(.system(size: 14))
-                        .textFieldStyle(.plain)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Theme.paper)
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+        return VStack(spacing: 8) {
+            // Row 1: mode toggle — full width
+            HStack(spacing: 0) {
+                modeButton(.teach)
+                modeButton(.quiz)
             }
+            .frame(maxWidth: .infinity)
+            .background(Theme.paper)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.ink, lineWidth: 1.5))
 
+            // Row 2: subject input — full width
+            HStack(spacing: 8) {
+                Image(systemName: "book.closed")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.inkFaint)
+                TextField("Subject or topic…", text: $session.subject)
+                    .font(.system(size: 14, design: .rounded))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+
+            // Row 3: scrolling chips
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(quickSubjects, id: \.self) { s in
                         let active = session.subject == s
-                        Button { session.startPresetSession(s) } label: {
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                session.startPresetSession(s)
+                            }
+                        } label: {
                             Text(s)
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
                                 .foregroundStyle(active ? Theme.paper : Theme.inkSoft)
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 7)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
                                 .background(active ? Theme.navy : Color.clear)
                                 .clipShape(Capsule())
-                                .overlay(Capsule().strokeBorder(active ? Theme.navy : Theme.line, lineWidth: 1))
+                                .overlay(Capsule().strokeBorder(active ? Theme.navy : Theme.line))
                         }
+                        .buttonStyle(SpringButtonStyle())
                     }
                 }
+                .padding(.horizontal, 1)
             }
         }
     }
@@ -184,120 +177,79 @@ struct ContentView: View {
     private func modeButton(_ m: TutorMode) -> some View {
         @Bindable var session = session
         let active = session.mode == m
-        return Button { session.mode = m } label: {
+        return Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { session.mode = m }
+        } label: {
             Text(m.label)
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(active ? Theme.paper : Theme.ink)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .padding(.vertical, 11)
                 .background(active ? Theme.ink : Color.clear)
         }
         .buttonStyle(.plain)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: active)
     }
 
     // MARK: - Voice bar
 
     private var voiceBar: some View {
-        @Bindable var session = session
+        let rs = session.realtimeSession
+
         return VStack(spacing: 10) {
             // Status row
             HStack(spacing: 8) {
                 statusTag
-                if session.synth.isSpeaking {
-                    WaveformBars(isActive: true)
-                }
+                if rs.isTutorSpeaking { WaveformBars(isActive: true) }
                 Text(statusText)
-                    .font(.system(size: 14, design: .rounded))
-                    .italic()
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
                     .foregroundStyle(Theme.inkSoft)
                     .lineLimit(2)
-                Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 28)
 
-            // Controls row
             HStack(spacing: 10) {
-                // Voice gender picker
-                HStack(spacing: 4) {
-                    ForEach(VoiceGender.allCases, id: \.rawValue) { g in
-                        Button { session.synth.gender = g } label: {
-                            VStack(spacing: 2) {
-                                Text(g == .female ? "♀" : "♂")
-                                    .font(.system(size: 15, weight: .bold))
-                                Text(g.label)
-                                    .font(.system(size: 8, weight: .bold, design: .rounded))
-                            }
-                            .foregroundStyle(session.synth.gender == g ? Theme.paper : Theme.inkSoft)
-                            .frame(width: 42, height: 42)
-                            .background(
-                                session.synth.gender == g
-                                ? AnyShapeStyle(Theme.brandGradient)
-                                : AnyShapeStyle(Theme.bgDeep)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        }
-                    }
-                }
+                // Mute / unmute button (mic always on via Realtime; this just mutes input)
+                MuteMicButton(realtimeSession: rs)
 
-                // Mic button
-                Button {
-                    if session.synth.isSpeaking  { session.stopSpeaking();  return }
-                    if session.recognizer.isListening { session.stopListening(); return }
-                    session.startListening()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(micGradient)
-                            .frame(width: 64, height: 64)
-                            .shadow(color: micShadow, radius: 12, y: 5)
-                        Image(systemName: micIcon)
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    .scaleEffect(session.recognizer.isListening ? 1.1 : 1.0)
-                    .animation(
-                        session.recognizer.isListening
-                        ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
-                        : .spring(response: 0.3),
-                        value: session.recognizer.isListening
-                    )
-                }
-                .disabled(session.isThinking)
-
-                // Text input
+                // Text input fallback
                 HStack(spacing: 6) {
                     TextField("Or type here…", text: $textInput)
                         .font(.system(size: 14, design: .rounded))
                         .focused($textFocused)
                         .submitLabel(.send)
                         .onSubmit(sendText)
-
                     if !textInput.isEmpty {
                         Button(action: sendText) {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 26))
                                 .foregroundStyle(Theme.navy)
                         }
-                        .disabled(session.isThinking)
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Theme.paper)
+                .background(.ultraThinMaterial)
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
         }
     }
 
+    // MARK: - Status helpers
+
     private var statusTag: some View {
-        Group {
-            if session.isThinking {
-                pulsingTag("THINKING", color: Theme.navy)
-            } else if session.recognizer.isListening {
+        let rs = session.realtimeSession
+        return Group {
+            if !rs.isConnected {
+                tag("OFFLINE", color: Theme.inkFaint)
+            } else if rs.isStudentSpeaking {
                 tag("LISTENING", color: Theme.amberDeep)
-            } else if session.synth.isSpeaking {
+            } else if rs.isTutorSpeaking {
                 tag("SPEAKING", color: Theme.tealDeep)
+            } else if rs.isMuted {
+                tag("MUTED", color: Theme.inkFaint)
             } else {
                 EmptyView()
             }
@@ -315,68 +267,95 @@ struct ContentView: View {
             .clipShape(Capsule())
     }
 
-    private func pulsingTag(_ text: String, color: Color) -> some View {
-        tag(text, color: color)
-            .modifier(PulseModifier())
-    }
-
     private var statusText: String {
-        if session.isThinking { return "on it..." }
-        if session.recognizer.isListening {
-            return session.recognizer.interim.isEmpty ? "go ahead, I'm listening..." : session.recognizer.interim
-        }
-        if session.synth.isSpeaking { return "tap mic to jump in" }
-        if session.messages.isEmpty { return "Tap the mic or pick a subject to get started!" }
-        if session.handsFree { return "hands-free on — mic restarts after I'm done" }
-        return "tap the mic to reply"
-    }
-
-    private var micIcon: String {
-        if session.recognizer.isListening { return "stop.fill" }
-        if session.synth.isSpeaking      { return "waveform" }
-        return "mic.fill"
-    }
-
-    private var micGradient: LinearGradient {
-        if session.recognizer.isListening {
-            return LinearGradient(colors: [Theme.amber, Theme.amberDeep], startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-        if session.synth.isSpeaking {
-            return LinearGradient(colors: [Theme.teal, Theme.tealDeep], startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-        return LinearGradient(colors: [Theme.navy, Theme.teal], startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    private var micShadow: Color {
-        if session.recognizer.isListening { return Theme.amber.opacity(0.5) }
-        if session.synth.isSpeaking       { return Theme.teal.opacity(0.5) }
-        return Theme.navy.opacity(0.3)
+        let rs = session.realtimeSession
+        if !rs.isConnected    { return "Add your OpenAI key in Settings to start." }
+        if rs.isMuted         { return "Muted — tap to unmute." }
+        if rs.isStudentSpeaking { return "Go ahead, I'm listening…" }
+        if rs.isTutorSpeaking { return "Tap the mic button to cut in." }
+        return "Ask me anything — I'm always listening."
     }
 
     private func sendText() {
-        let t = textInput
-        textInput = ""
-        textFocused = false
-        Task { await session.send(t) }
+        let t = textInput.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return }
+        textInput = ""; textFocused = false
+        if session.realtimeSession.isConnected {
+            session.realtimeSession.sendText(t)
+        } else {
+            Task { await session.sendViaAnthropic(t) }
+        }
     }
 }
 
-// MARK: - Waveform bars (speaking indicator)
+// MARK: - Mute mic button with idle pulse glow
+
+struct MuteMicButton: View {
+    let realtimeSession: RealtimeSession
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1/30, paused:
+            realtimeSession.isMuted ||
+            realtimeSession.isStudentSpeaking ||
+            realtimeSession.isTutorSpeaking
+        )) { ctx in
+            let t     = ctx.date.timeIntervalSinceReferenceDate
+            let pulse = CGFloat((sin(t * .pi / 2.0) + 1) / 2) // 0→1→0 every 4s
+
+            Button { realtimeSession.toggleMute() } label: {
+                ZStack {
+                    // Idle glow ring
+                    Circle()
+                        .fill(glowColor.opacity(0.15 * pulse))
+                        .frame(width: 84, height: 84)
+                    Circle()
+                        .fill(buttonGradient)
+                        .frame(width: 64, height: 64)
+                        .shadow(color: glowColor.opacity(0.28 + 0.18 * pulse),
+                                radius: 8 + 10 * pulse, y: 4)
+                    Image(systemName: realtimeSession.isMuted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .buttonStyle(SpringButtonStyle())
+        }
+    }
+
+    private var buttonGradient: LinearGradient {
+        if realtimeSession.isMuted {
+            return LinearGradient(colors: [Color(white: 0.55), Color(white: 0.45)],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        if realtimeSession.isStudentSpeaking {
+            return LinearGradient(colors: [Theme.amber, Theme.amberDeep],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        if realtimeSession.isTutorSpeaking {
+            return LinearGradient(colors: [Theme.teal, Theme.tealDeep],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        return LinearGradient(colors: [Theme.navy, Theme.teal],
+                              startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    private var glowColor: Color {
+        realtimeSession.isTutorSpeaking ? Theme.teal : Theme.navy
+    }
+}
+
+// MARK: - Waveform bars
 
 struct WaveformBars: View {
     let isActive: Bool
-
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.1, paused: !isActive)) { ctx in
+        TimelineView(.animation(minimumInterval: 0.08, paused: !isActive)) { ctx in
             HStack(spacing: 3) {
                 ForEach(0..<6, id: \.self) { i in
                     let t = ctx.date.timeIntervalSinceReferenceDate
                     let h: CGFloat = isActive
-                        ? abs(CGFloat(sin(t * 5.0 + Double(i) * 1.1))) * 18 + 5
-                        : 4
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Theme.teal)
-                        .frame(width: 3, height: h)
+                        ? abs(CGFloat(sin(t * 5.0 + Double(i) * 1.1))) * 18 + 5 : 4
+                    RoundedRectangle(cornerRadius: 2).fill(Theme.teal).frame(width: 3, height: h)
                 }
             }
         }
@@ -384,16 +363,13 @@ struct WaveformBars: View {
     }
 }
 
-// MARK: - Pulsing animation modifier
+// MARK: - Spring button style
 
-struct PulseModifier: ViewModifier {
-    @State private var on = false
-    func body(content: Content) -> some View {
-        content
-            .opacity(on ? 1.0 : 0.55)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) { on = true }
-            }
+struct SpringButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
+            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: configuration.isPressed)
     }
 }
 
@@ -407,13 +383,10 @@ struct CompactToggleStyle: ToggleStyle {
                 RoundedRectangle(cornerRadius: 20)
                     .fill(configuration.isOn ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.line))
                     .frame(width: 30, height: 18)
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 14, height: 14)
-                    .padding(2)
+                Circle().fill(.white).frame(width: 14, height: 14).padding(2)
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
             }
-            .animation(.easeInOut(duration: 0.2), value: configuration.isOn)
+            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: configuration.isOn)
         }
         .onTapGesture { configuration.isOn.toggle() }
     }
@@ -428,24 +401,18 @@ struct TranscriptSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     if session.messages.isEmpty {
-                        VStack(spacing: 10) {
-                            Text("Nothing yet")
-                                .font(.serif(20)).italic()
-                                .foregroundStyle(Theme.inkFaint)
-                            Text("Pick a subject or tap the mic to get started.")
-                                .font(.system(size: 13, design: .rounded))
-                                .foregroundStyle(Theme.inkFaint)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 60)
+                        Text("Nothing yet — start a voice conversation.")
+                            .font(.system(size: 14, design: .rounded)).italic()
+                            .foregroundStyle(Theme.inkFaint)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
                     }
                     ForEach(session.messages) { m in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(m.role == .user ? "YOU" : "TUTORLY")
-                                .font(.mono(9, weight: .bold))
-                                .kerning(1.2)
+                                .font(.mono(9, weight: .bold)).kerning(1.2)
                                 .foregroundStyle(Theme.inkFaint)
                             Text(m.content)
                                 .font(.system(size: 15, design: .rounded))
@@ -454,25 +421,19 @@ struct TranscriptSheet: View {
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(m.role == .assistant ? Theme.navy.opacity(0.03) : Theme.paper)
-                        .overlay(
-                            Rectangle()
-                                .fill(m.role == .assistant ? Theme.navy : Theme.teal)
-                                .frame(width: 2),
-                            alignment: .leading
-                        )
+                        .background(m.role == .assistant ? Theme.navy.opacity(0.04) : Theme.paper)
+                        .overlay(Rectangle().fill(m.role == .assistant ? Theme.navy : Theme.teal).frame(width: 2), alignment: .leading)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
                 .padding()
             }
             .background(Theme.bg)
-            .navigationTitle("Conversation")
+            .navigationTitle("Transcript")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear") { session.newSession(); dismiss() }
-                        .foregroundStyle(Theme.inkSoft)
+                    Button("Clear") { session.newSession(); dismiss() }.foregroundStyle(Theme.inkSoft)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.bold()
@@ -487,44 +448,74 @@ struct TranscriptSheet: View {
 struct SettingsSheet: View {
     @Environment(TutorSession.self) private var session
     @Environment(\.dismiss) private var dismiss
-    @State private var apiKey: String = Keychain.read() ?? ""
+
+    @State private var openAIKey: String  = Keychain.readOpenAI() ?? ""
+    @State private var anthropicKey: String = Keychain.read() ?? ""
     @State private var saved = false
 
     var body: some View {
+        @Bindable var session = session
+
         NavigationStack {
             Form {
+                // OpenAI key (Realtime voice)
                 Section {
-                    SecureField("sk-ant-…", text: $apiKey)
+                    SecureField("sk-…", text: $openAIKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(size: 14, design: .monospaced))
                 } header: {
-                    Text("Anthropic API Key")
+                    Text("OpenAI API Key")
                 } footer: {
-                    Text("Stored securely in your iOS Keychain — never committed to source control. Get a key at console.anthropic.com.")
+                    Text("Used for real-time voice mode. Get a key at platform.openai.com. Stored in your iOS Keychain.")
                 }
 
+                // Anthropic key (fallback / text mode)
+                Section {
+                    SecureField("sk-ant-…", text: $anthropicKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 14, design: .monospaced))
+                } header: {
+                    Text("Anthropic API Key (text fallback)")
+                } footer: {
+                    Text("Used when Realtime is not connected. Get a key at console.anthropic.com.")
+                }
+
+                // Voice
                 Section {
                     Picker("Voice", selection: Binding(
                         get: { session.synth.gender },
                         set: { session.synth.gender = $0 }
                     )) {
                         ForEach(VoiceGender.allCases, id: \.rawValue) { g in
-                            Text(g == .female ? "Girl (friendly female voice)" : "Boy (friendly male voice)")
-                                .tag(g)
+                            Text(g == .female ? "Girl" : "Boy").tag(g)
                         }
                     }
-                    .pickerStyle(.inline)
+                    .pickerStyle(.segmented)
                 } header: {
-                    Text("Tutor Voice")
+                    Text("Fallback Voice")
                 } footer: {
-                    Text("You can also switch voices instantly using the girl/boy buttons next to the mic.")
+                    Text("Voice used when falling back to the Anthropic text pipeline.")
                 }
 
+                // Conversation
+                Section {
+                    Toggle("Hands-free (text mode)", isOn: $session.handsFree)
+                } header: {
+                    Text("Conversation")
+                } footer: {
+                    Text("Restarts the mic automatically after each reply in text mode. In voice mode, the mic is always live.")
+                }
+
+                // Save
                 Section {
                     Button {
-                        Keychain.save(apiKey)
+                        Keychain.saveOpenAI(openAIKey)
+                        Keychain.save(anthropicKey)
                         saved = true
+                        session.realtimeSession.disconnect()
+                        session.realtimeSession.connect()
                         Task {
                             try? await Task.sleep(nanoseconds: 1_200_000_000)
                             dismiss()
@@ -532,24 +523,17 @@ struct SettingsSheet: View {
                     } label: {
                         HStack {
                             Spacer()
-                            Text(saved ? "Saved" : "Save Key")
+                            Text(saved ? "Saved — reconnecting" : "Save & Connect")
                                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                             Spacer()
                         }
                     }
-                    .disabled(apiKey.isEmpty)
+                    .disabled(openAIKey.isEmpty && anthropicKey.isEmpty)
                 }
 
                 Section {
-                    Link("Get an API key", destination: URL(string: "https://console.anthropic.com")!)
-                }
-
-                Section {
-                    Text("Tutorly is a voice AI tutor with a live whiteboard. Speak your question, and the tutor explains it out loud while drawing diagrams and working through problems step by step.")
-                        .font(.system(size: 13, design: .rounded))
-                        .foregroundStyle(Theme.inkFaint)
-                } header: {
-                    Text("About")
+                    Link("OpenAI platform", destination: URL(string: "https://platform.openai.com")!)
+                    Link("Anthropic console", destination: URL(string: "https://console.anthropic.com")!)
                 }
             }
             .navigationTitle("Settings")
@@ -564,6 +548,5 @@ struct SettingsSheet: View {
 }
 
 #Preview {
-    ContentView()
-        .environment(TutorSession())
+    ContentView().environment(TutorSession())
 }

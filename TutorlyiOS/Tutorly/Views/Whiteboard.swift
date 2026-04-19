@@ -216,7 +216,7 @@ struct Whiteboard: View {
                 }
             }
             .padding(4)
-            .background(Theme.bgDeep)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
             HStack(spacing: 6) {
@@ -301,35 +301,36 @@ struct Whiteboard: View {
 
                 AIDrawingOverlay(items: drawItems)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(color: Color.black.opacity(0.06), radius: 8, y: 3)
-            .overlay(AnimatedBorder(isActive: session.isThinking))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            // Soft inner shadow gives depth without a harsh border
+            .shadow(color: Color.black.opacity(0.08), radius: 10, y: 4)
+            .overlay(AlwaysOnBorder(isActive: session.realtimeSession.isTutorSpeaking || session.isThinking))
         }
     }
 }
 
-// MARK: - Animated border (visible only while AI is thinking)
+// MARK: - Always-on animated gradient border
+// Slow rotation at low opacity when idle; faster + brighter when the tutor is active.
 
-struct AnimatedBorder: View {
+struct AlwaysOnBorder: View {
     let isActive: Bool
-    @State private var phase: CGFloat = 0
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 16)
-            .strokeBorder(
-                isActive
-                ? AnyShapeStyle(AngularGradient(
-                    colors: [Theme.navy, Theme.teal, Theme.amber, Theme.navy],
-                    center: .center,
-                    angle: .degrees(Double(phase) * 360)
-                ))
-                : AnyShapeStyle(Theme.line),
-                lineWidth: isActive ? 2.5 : 1
-            )
-            .animation(
-                isActive ? .linear(duration: 2.2).repeatForever(autoreverses: false) : .default,
-                value: phase
-            )
-            .onChange(of: isActive) { _, active in phase = active ? 1 : 0 }
+        TimelineView(.animation(minimumInterval: 1/30)) { ctx in
+            let t     = ctx.date.timeIntervalSinceReferenceDate
+            let speed = isActive ? 3.0 : 14.0
+            let angle = (t / speed).truncatingRemainder(dividingBy: 1.0) * 360
+
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(
+                    AngularGradient(
+                        colors: [Theme.navy, Theme.teal, Theme.amber, Theme.teal, Theme.navy],
+                        center: .center,
+                        angle: .degrees(angle)
+                    ),
+                    lineWidth: isActive ? 2.5 : 1.5
+                )
+                .opacity(isActive ? 0.90 : 0.22)
+        }
     }
 }
