@@ -19,7 +19,7 @@ struct ContentView: View {
             Theme.bg.ignoresSafeArea()
             backgroundGlow.ignoresSafeArea()
 
-            VStack(spacing: 14) {
+            VStack(spacing: 12) {
                 header
                 modeAndSubjectBar
                 Whiteboard()
@@ -27,7 +27,7 @@ struct ContentView: View {
                 voiceBar
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
         .sheet(isPresented: $showTranscript) { TranscriptSheet() }
@@ -42,40 +42,45 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Pieces
+    // MARK: - Background
 
     private var backgroundGlow: some View {
         ZStack {
             Circle()
-                .fill(Theme.navy.opacity(0.06))
-                .frame(width: 400)
-                .blur(radius: 80)
-                .offset(x: -140, y: -220)
-            Circle()
-                .fill(Theme.teal.opacity(0.10))
-                .frame(width: 420)
+                .fill(Theme.navy.opacity(0.07))
+                .frame(width: 500)
                 .blur(radius: 90)
-                .offset(x: 160, y: 240)
+                .offset(x: -160, y: -260)
+            Circle()
+                .fill(Theme.teal.opacity(0.09))
+                .frame(width: 420)
+                .blur(radius: 80)
+                .offset(x: 180, y: 260)
+            Circle()
+                .fill(Theme.amber.opacity(0.06))
+                .frame(width: 320)
+                .blur(radius: 70)
+                .offset(x: 40, y: 80)
         }
     }
+
+    // MARK: - Header
 
     private var header: some View {
         @Bindable var session = session
         return HStack(spacing: 12) {
-            // Brand mark
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Theme.brandGradient)
-                    .frame(width: 38, height: 38)
-                    .shadow(color: Theme.navy.opacity(0.25), radius: 6, x: 0, y: 2)
+                    .frame(width: 40, height: 40)
+                    .shadow(color: Theme.navy.opacity(0.3), radius: 8, x: 0, y: 3)
                 Text("T")
-                    .font(.serif(20, weight: .heavy))
+                    .font(.serif(21, weight: .heavy))
                     .foregroundStyle(Theme.paper)
-                // Tassel dot
                 Circle()
                     .fill(Theme.amber)
                     .frame(width: 6, height: 6)
-                    .offset(x: 11, y: -11)
+                    .offset(x: 12, y: -12)
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -91,20 +96,17 @@ struct ContentView: View {
                         .font(.serif(24, weight: .heavy))
                         .foregroundStyle(Theme.amber)
                 }
-                Text("Your AI study buddy")
-                    .font(.mono(9, weight: .medium))
-                    .kerning(1.5)
+                Text("let's learn together")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(Theme.inkFaint)
-                    .textCase(.uppercase)
             }
 
             Spacer()
 
-            // Hands-free toggle
             Toggle(isOn: $session.handsFree) {
                 Text("Hands-free")
                     .font(.mono(10, weight: .semibold))
-                    .kerning(1.2)
+                    .kerning(1.0)
                     .textCase(.uppercase)
                     .foregroundStyle(Theme.inkSoft)
             }
@@ -115,7 +117,7 @@ struct ContentView: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.inkSoft)
                     .frame(width: 34, height: 34)
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line))
             }
 
             Button { showSettings = true } label: {
@@ -123,27 +125,27 @@ struct ContentView: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.inkSoft)
                     .frame(width: 34, height: 34)
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line))
             }
         }
         .padding(.top, 8)
     }
 
+    // MARK: - Mode + subject bar
+
     private var modeAndSubjectBar: some View {
         @Bindable var session = session
         return VStack(spacing: 10) {
             HStack(spacing: 10) {
-                // Mode segmented
                 HStack(spacing: 0) {
                     modeButton(.teach)
                     modeButton(.quiz)
                 }
                 .background(Theme.paper)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.ink, lineWidth: 1.5))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.ink, lineWidth: 1.5))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
                 .frame(maxWidth: 220)
 
-                // Subject input
                 HStack(spacing: 8) {
                     Image(systemName: "book.closed")
                         .font(.system(size: 12))
@@ -155,25 +157,23 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .background(Theme.paper)
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
-            // Quick-start chips
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(quickSubjects, id: \.self) { s in
+                        let active = session.subject == s
                         Button { session.startPresetSession(s) } label: {
                             Text(s)
-                                .font(.mono(11, weight: .medium))
-                                .kerning(0.8)
-                                .foregroundStyle(Theme.inkSoft)
-                                .padding(.horizontal, 12)
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundStyle(active ? Theme.paper : Theme.inkSoft)
+                                .padding(.horizontal, 13)
                                 .padding(.vertical, 7)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .strokeBorder(Theme.line, lineWidth: 1)
-                                )
+                                .background(active ? Theme.navy : Color.clear)
+                                .clipShape(Capsule())
+                                .overlay(Capsule().strokeBorder(active ? Theme.navy : Theme.line, lineWidth: 1))
                         }
                     }
                 }
@@ -186,7 +186,7 @@ struct ContentView: View {
         let active = session.mode == m
         return Button { session.mode = m } label: {
             Text(m.label)
-                .font(.serif(14, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(active ? Theme.paper : Theme.ink)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -195,48 +195,79 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Voice bar
+
     private var voiceBar: some View {
         @Bindable var session = session
-        return VStack(spacing: 8) {
-            // Status line
+        return VStack(spacing: 10) {
+            // Status row
             HStack(spacing: 8) {
                 statusTag
+                if session.synth.isSpeaking {
+                    WaveformBars(isActive: true)
+                }
                 Text(statusText)
-                    .font(.serif(14))
+                    .font(.system(size: 14, design: .rounded))
                     .italic()
                     .foregroundStyle(Theme.inkSoft)
                     .lineLimit(2)
                 Spacer()
             }
-            .frame(minHeight: 20)
+            .frame(minHeight: 28)
 
-            // Mic + text input row
-            HStack(spacing: 12) {
+            // Controls row
+            HStack(spacing: 10) {
+                // Voice gender picker
+                HStack(spacing: 4) {
+                    ForEach(VoiceGender.allCases, id: \.rawValue) { g in
+                        Button { session.synth.gender = g } label: {
+                            VStack(spacing: 2) {
+                                Text(g == .female ? "♀" : "♂")
+                                    .font(.system(size: 15, weight: .bold))
+                                Text(g.label)
+                                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(session.synth.gender == g ? Theme.paper : Theme.inkSoft)
+                            .frame(width: 42, height: 42)
+                            .background(
+                                session.synth.gender == g
+                                ? AnyShapeStyle(Theme.brandGradient)
+                                : AnyShapeStyle(Theme.bgDeep)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                }
+
                 // Mic button
                 Button {
-                    if session.synth.isSpeaking { session.stopSpeaking(); return }
+                    if session.synth.isSpeaking  { session.stopSpeaking();  return }
                     if session.recognizer.isListening { session.stopListening(); return }
                     session.startListening()
                 } label: {
                     ZStack {
                         Circle()
                             .fill(micGradient)
-                            .frame(width: 60, height: 60)
-                            .shadow(color: micShadow, radius: 10, y: 4)
+                            .frame(width: 64, height: 64)
+                            .shadow(color: micShadow, radius: 12, y: 5)
                         Image(systemName: micIcon)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.system(size: 24, weight: .semibold))
                             .foregroundStyle(.white)
                     }
-                    .scaleEffect(session.recognizer.isListening ? 1.05 : 1.0)
-                    .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true),
-                               value: session.recognizer.isListening)
+                    .scaleEffect(session.recognizer.isListening ? 1.1 : 1.0)
+                    .animation(
+                        session.recognizer.isListening
+                        ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+                        : .spring(response: 0.3),
+                        value: session.recognizer.isListening
+                    )
                 }
                 .disabled(session.isThinking)
 
-                // Text fallback
+                // Text input
                 HStack(spacing: 6) {
-                    TextField("Or type your question…", text: $textInput)
-                        .font(.system(size: 14))
+                    TextField("Or type here…", text: $textInput)
+                        .font(.system(size: 14, design: .rounded))
                         .focused($textFocused)
                         .submitLabel(.send)
                         .onSubmit(sendText)
@@ -253,8 +284,8 @@ struct ContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Theme.paper)
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
         }
     }
@@ -262,7 +293,7 @@ struct ContentView: View {
     private var statusTag: some View {
         Group {
             if session.isThinking {
-                tag("THINKING", color: Theme.navy)
+                pulsingTag("THINKING", color: Theme.navy)
             } else if session.recognizer.isListening {
                 tag("LISTENING", color: Theme.amberDeep)
             } else if session.synth.isSpeaking {
@@ -276,28 +307,33 @@ struct ContentView: View {
     private func tag(_ text: String, color: Color) -> some View {
         Text(text)
             .font(.mono(9, weight: .bold))
-            .kerning(1.5)
+            .kerning(1.4)
             .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
             .background(color)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .clipShape(Capsule())
+    }
+
+    private func pulsingTag(_ text: String, color: Color) -> some View {
+        tag(text, color: color)
+            .modifier(PulseModifier())
     }
 
     private var statusText: String {
-        if session.isThinking { return "working it out…" }
+        if session.isThinking { return "on it..." }
         if session.recognizer.isListening {
-            return session.recognizer.interim.isEmpty ? "go ahead, I'm listening…" : session.recognizer.interim
+            return session.recognizer.interim.isEmpty ? "go ahead, I'm listening..." : session.recognizer.interim
         }
-        if session.synth.isSpeaking { return "tap mic to interrupt" }
-        if session.messages.isEmpty { return "Tap the mic or pick a subject to begin." }
-        if session.handsFree { return "Hands-free on — I'll listen when I finish." }
-        return "Tap the mic to reply."
+        if session.synth.isSpeaking { return "tap mic to jump in" }
+        if session.messages.isEmpty { return "Tap the mic or pick a subject to get started!" }
+        if session.handsFree { return "hands-free on — mic restarts after I'm done" }
+        return "tap the mic to reply"
     }
 
     private var micIcon: String {
         if session.recognizer.isListening { return "stop.fill" }
-        if session.synth.isSpeaking { return "waveform" }
+        if session.synth.isSpeaking      { return "waveform" }
         return "mic.fill"
     }
 
@@ -313,7 +349,7 @@ struct ContentView: View {
 
     private var micShadow: Color {
         if session.recognizer.isListening { return Theme.amber.opacity(0.5) }
-        if session.synth.isSpeaking { return Theme.teal.opacity(0.5) }
+        if session.synth.isSpeaking       { return Theme.teal.opacity(0.5) }
         return Theme.navy.opacity(0.3)
     }
 
@@ -322,6 +358,42 @@ struct ContentView: View {
         textInput = ""
         textFocused = false
         Task { await session.send(t) }
+    }
+}
+
+// MARK: - Waveform bars (speaking indicator)
+
+struct WaveformBars: View {
+    let isActive: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.1, paused: !isActive)) { ctx in
+            HStack(spacing: 3) {
+                ForEach(0..<6, id: \.self) { i in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    let h: CGFloat = isActive
+                        ? abs(CGFloat(sin(t * 5.0 + Double(i) * 1.1))) * 18 + 5
+                        : 4
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Theme.teal)
+                        .frame(width: 3, height: h)
+                }
+            }
+        }
+        .frame(width: 34, height: 28)
+    }
+}
+
+// MARK: - Pulsing animation modifier
+
+struct PulseModifier: ViewModifier {
+    @State private var on = false
+    func body(content: Content) -> some View {
+        content
+            .opacity(on ? 1.0 : 0.55)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) { on = true }
+            }
     }
 }
 
@@ -359,11 +431,11 @@ struct TranscriptSheet: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if session.messages.isEmpty {
                         VStack(spacing: 10) {
-                            Text("No conversation yet")
+                            Text("Nothing yet")
                                 .font(.serif(20)).italic()
                                 .foregroundStyle(Theme.inkFaint)
-                            Text("Pick a subject, or tap the mic and start talking.")
-                                .font(.system(size: 13))
+                            Text("Pick a subject or tap the mic to get started.")
+                                .font(.system(size: 13, design: .rounded))
                                 .foregroundStyle(Theme.inkFaint)
                         }
                         .frame(maxWidth: .infinity)
@@ -376,7 +448,7 @@ struct TranscriptSheet: View {
                                 .kerning(1.2)
                                 .foregroundStyle(Theme.inkFaint)
                             Text(m.content)
-                                .font(.system(size: 15))
+                                .font(.system(size: 15, design: .rounded))
                                 .foregroundStyle(Theme.inkSoft)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -389,6 +461,7 @@ struct TranscriptSheet: View {
                                 .frame(width: 2),
                             alignment: .leading
                         )
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
                 .padding()
@@ -398,11 +471,8 @@ struct TranscriptSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear") {
-                        session.newSession()
-                        dismiss()
-                    }
-                    .foregroundStyle(Theme.inkSoft)
+                    Button("Clear") { session.newSession(); dismiss() }
+                        .foregroundStyle(Theme.inkSoft)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.bold()
@@ -415,6 +485,7 @@ struct TranscriptSheet: View {
 // MARK: - Settings sheet
 
 struct SettingsSheet: View {
+    @Environment(TutorSession.self) private var session
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey: String = Keychain.read() ?? ""
     @State private var saved = false
@@ -428,9 +499,26 @@ struct SettingsSheet: View {
                         .autocorrectionDisabled()
                         .font(.system(size: 14, design: .monospaced))
                 } header: {
-                    Text("Anthropic API key")
+                    Text("Anthropic API Key")
                 } footer: {
-                    Text("Stored securely in your iOS Keychain — never leaves your device except to call the Anthropic API. Get a key at console.anthropic.com.")
+                    Text("Stored securely in your iOS Keychain — never committed to source control. Get a key at console.anthropic.com.")
+                }
+
+                Section {
+                    Picker("Voice", selection: Binding(
+                        get: { session.synth.gender },
+                        set: { session.synth.gender = $0 }
+                    )) {
+                        ForEach(VoiceGender.allCases, id: \.rawValue) { g in
+                            Text(g == .female ? "Girl (friendly female voice)" : "Boy (friendly male voice)")
+                                .tag(g)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } header: {
+                    Text("Tutor Voice")
+                } footer: {
+                    Text("You can also switch voices instantly using the girl/boy buttons next to the mic.")
                 }
 
                 Section {
@@ -444,8 +532,8 @@ struct SettingsSheet: View {
                     } label: {
                         HStack {
                             Spacer()
-                            Text(saved ? "Saved ✓" : "Save key")
-                                .font(.system(size: 15, weight: .semibold))
+                            Text(saved ? "Saved" : "Save Key")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
                             Spacer()
                         }
                     }
@@ -454,12 +542,11 @@ struct SettingsSheet: View {
 
                 Section {
                     Link("Get an API key", destination: URL(string: "https://console.anthropic.com")!)
-                    Link("Privacy: how this works", destination: URL(string: "https://www.anthropic.com/privacy")!)
                 }
 
                 Section {
-                    Text("Tutorly is a voice tutor that explains concepts and quizzes you, with a live whiteboard the tutor draws on to illustrate ideas. Try maths — you'll see it sketching solutions step by step.")
-                        .font(.system(size: 13))
+                    Text("Tutorly is a voice AI tutor with a live whiteboard. Speak your question, and the tutor explains it out loud while drawing diagrams and working through problems step by step.")
+                        .font(.system(size: 13, design: .rounded))
                         .foregroundStyle(Theme.inkFaint)
                 } header: {
                     Text("About")

@@ -10,19 +10,15 @@ final class TutorSession {
     var errorMessage: String?
     var handsFree: Bool = false
 
-    // Whiteboard bridge — Views subscribe to these
     var pendingDrawBlock: DrawBlock?
     var drawTick: Int = 0
     var clearBoardTrigger: Int = 0
 
-    // Keep last N turns only, to cap context size
     private let maxHistory = 20
 
     let recognizer = SpeechRecognizer()
     let synth = SpeechSynthesizer()
     private let client = AnthropicClient()
-
-    // MARK: - Public actions
 
     @MainActor
     func send(_ text: String) async {
@@ -47,7 +43,7 @@ final class TutorSession {
             }
 
             if !reply.spoken.isEmpty {
-                synth.speak(reply.spoken) { [weak self] in
+                synth.speak(cleanForSpeech(spoken)) { [weak self] in
                     self?.maybeRestartMic()
                 }
             } else {
@@ -56,10 +52,7 @@ final class TutorSession {
         } catch {
             isThinking = false
             errorMessage = error.localizedDescription
-            messages.append(ChatMessage(
-                role: .assistant,
-                content: "Sorry — \(error.localizedDescription)"
-            ))
+            messages.append(ChatMessage(role: .assistant, content: "Sorry — \(error.localizedDescription)"))
         }
     }
 
@@ -76,8 +69,7 @@ final class TutorSession {
     }
 
     func stopListening() { recognizer.stop() }
-
-    func stopSpeaking() { synth.stop() }
+    func stopSpeaking()  { synth.stop() }
 
     func newSession() {
         synth.stop()
@@ -100,5 +92,23 @@ final class TutorSession {
             try? await Task.sleep(nanoseconds: 400_000_000)
             startListening()
         }
+    }
+
+    // Strip emoji and markdown before passing to TTS — they get read aloud verbatim.
+    private func cleanForSpeech(_ text: String) -> String {
+        var result = text
+        // Safety net: strip any <draw> block that slipped through
+        if let s = result.range(of: "<draw>"),
+           let e = result.range(of: "</draw>", range: s.upperBound..<result.endIndex) {
+            result = String(result[result.startIndex..<s.lowerBound]) +
+                     String(result[e.upperBound..<result.endIndex])
+        }
+        // Remove emoji (Unicode scalars with emoji presentation)
+        result = String(result.unicodeScalars.filter { !$0.properties.isEmojiPresentation })
+        // Remove markdown asterisks and hash-headers
+        result = result
+            .replacingOccurrences(of: #"\*+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"#+\s*"#, with: "", options: .regularExpression)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

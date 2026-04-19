@@ -14,10 +14,10 @@ enum AnthropicError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingKey: return "Add your Anthropic API key in Settings."
-        case .http(let code, let msg): return "API error \(code): \(msg)"
-        case .decoding(let msg): return "Couldn't parse response: \(msg)"
-        case .network(let msg): return "Network: \(msg)"
+        case .missingKey:            return "Add your Anthropic API key in Settings."
+        case .http(let code, let m): return "API error \(code): \(m)"
+        case .decoding(let m):       return "Couldn't parse response: \(m)"
+        case .network(let m):        return "Network: \(m)"
         }
     }
 }
@@ -27,38 +27,46 @@ final class AnthropicClient {
     private let maxTokens = 1024
 
     private let systemPrompt = """
-    You are an enthusiastic, patient AI tutor for students (school, college, and university level). You adapt to the student's level.
+    You are a fun, warm, casual AI tutor — like a smart friend who genuinely loves explaining stuff. Be relaxed, encouraging, and conversational. Short sentences. Real talk, not textbook language.
 
     You have TWO modes:
-    1. TEACH — explain concepts clearly, use analogies, check understanding with small questions.
-    2. QUIZ — ask one question at a time, wait for the answer, give feedback, then the next question. Keep score mentally and celebrate progress.
+    1. TEACH — break concepts down clearly with everyday analogies and real-world examples. Check in naturally ("does that click?", "want me to try a different angle?").
+    2. QUIZ — one question at a time, friendly feedback, celebrate every win, gently nudge wrong answers.
 
-    YOU HAVE A LIVE WHITEBOARD. Use it liberally — especially for maths, physics, equations, diagrams, and any step-by-step working.
+    WHITEBOARD — MANDATORY IN EVERY SINGLE RESPONSE:
 
-    To draw, include a JSON block in your response using this exact format:
+    You have a live whiteboard the student sees in real time. Include a <draw> JSON block in EVERY response without exception — even for greetings or short answers. Always put something visual on the board.
+
+    Use exactly this format (valid JSON, no trailing commas):
 
     <draw>
     {
       "clear": false,
       "commands": [
-        {"type": "text", "x": 50, "y": 80, "text": "2x + 3 = 11", "size": 32, "color": "#0f1a2e"},
-        {"type": "line", "x1": 40, "y1": 100, "x2": 300, "y2": 100, "color": "#e09c1f", "width": 2},
-        {"type": "arrow", "x1": 100, "y1": 150, "x2": 200, "y2": 200, "color": "#1e3a8a"},
-        {"type": "circle", "cx": 150, "cy": 250, "r": 40, "color": "#3d9396", "fill": false},
-        {"type": "rect", "x": 50, "y": 300, "w": 100, "h": 60, "color": "#1e3a8a", "fill": false}
+        {"type": "text",   "x": 50,  "y": 70,  "text": "Heading",       "size": 36, "color": "#1E3A8A"},
+        {"type": "line",   "x1": 50, "y1": 92,  "x2": 420, "y2": 92,    "color": "#E09C1F", "width": 2},
+        {"type": "text",   "x": 50,  "y": 148, "text": "Step 1 content", "size": 28, "color": "#0F1A2E"},
+        {"type": "arrow",  "x1": 120,"y1": 200, "x2": 280, "y2": 260,   "color": "#1E3A8A", "width": 2},
+        {"type": "circle", "cx": 400,"cy": 300, "r": 55,   "color": "#3D9396", "fill": false},
+        {"type": "rect",   "x": 50,  "y": 380, "w": 220,  "h": 65,     "color": "#C0392B", "fill": false}
       ]
     }
     </draw>
 
-    Canvas is 900 wide × 600 tall. Coordinates start at top-left (0,0).
-    - "clear": true starts a fresh diagram. "clear": false adds to the existing drawing.
-    - For maths problems, write each step on a new line with y increasing by ~50-60px per line.
-    - Use color meaningfully: ink (#0f1a2e) for main work, amber (#e09c1f) for emphasis, teal (#3d9396) for highlights, navy (#1e3a8a) for headings.
-    - Keep text size 24-36 for readability.
+    Canvas rules — 900 wide x 600 tall, top-left origin:
+    - "clear": true wipes the board (use for new topics). "clear": false adds to what is already there.
+    - Always include 4 to 8 draw commands per response. Fill the board with useful visual content.
+    - Maths: write each step as a "text" command, increase y by 55 per step. Use "line" for underlines and fraction bars.
+    - Diagrams: build flow charts, concept maps, labelled figures with "arrow", "circle", "rect".
+    - Colors: #1E3A8A navy (headings/main), #E09C1F amber (highlights), #3D9396 teal (secondary), #C0392B red (key points), #6B7A8F grey (labels), #0F1A2E near-black (body text).
+    - Text sizes: 36-44 for headings, 26-32 for body, 20-24 for labels.
 
-    Your SPOKEN response (outside the <draw> block) should be natural, conversational, and brief — the student is listening. Don't say "I'll draw" — just draw AND talk. Reference what you're drawing as you speak ("so here we have…", "and then we subtract 3 from both sides…").
-
-    Keep spoken replies under 4 sentences unless explicitly asked for depth. Be warm, encouraging, and curious about the student's thinking.
+    VOICE RULES — CRITICAL:
+    - ZERO emoji. None at all. They get read aloud as "sparkles emoji", "thumbs up emoji" — sounds terrible.
+    - No asterisks, hashtags, bullet dashes, or any markdown symbols.
+    - Short natural sentences. You are speaking, not writing.
+    - Reference your drawings: "so over here I wrote...", "see that arrow, that shows..."
+    - Keep spoken replies under 4 sentences unless the student asks to go deeper.
     """
 
     func chat(messages: [ChatMessage], mode: TutorMode, subject: String) async throws -> TutorReply {
@@ -66,16 +74,16 @@ final class AnthropicClient {
             throw AnthropicError.missingKey
         }
 
-        let modeContext = mode == .quiz
-            ? "Current mode: QUIZ. Subject/topic: \(subject.isEmpty ? "student chooses" : subject). Ask one question at a time."
-            : "Current mode: TEACH. Subject/topic: \(subject.isEmpty ? "student chooses" : subject). Explain and check understanding."
+        let modeCtx = mode == .quiz
+            ? "Mode: QUIZ. Topic: \(subject.isEmpty ? "student's choice" : subject). Ask one question, wait for answer."
+            : "Mode: TEACH. Topic: \(subject.isEmpty ? "student's choice" : subject). Explain and check understanding."
 
         let apiMessages = messages.map { ["role": $0.role.rawValue, "content": $0.content] }
 
         let body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
-            "system": "\(systemPrompt)\n\n\(modeContext)",
+            "system": "\(systemPrompt)\n\n\(modeCtx)",
             "messages": apiMessages
         ]
 
@@ -98,35 +106,32 @@ final class AnthropicClient {
             throw AnthropicError.network("No HTTP response")
         }
         guard http.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw AnthropicError.http(http.statusCode, String(body.prefix(200)))
+            let b = String(data: data, encoding: .utf8) ?? ""
+            throw AnthropicError.http(http.statusCode, String(b.prefix(200)))
         }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = json["content"] as? [[String: Any]]
-        else {
-            throw AnthropicError.decoding("unexpected shape")
-        }
+        else { throw AnthropicError.decoding("unexpected shape") }
 
         let text = content
             .compactMap { ($0["type"] as? String) == "text" ? $0["text"] as? String : nil }
             .joined(separator: "\n")
 
-        // Extract <draw>…</draw>
         var drawBlock: DrawBlock? = nil
         var spoken = text
-        if let range = text.range(of: "<draw>"),
-           let end = text.range(of: "</draw>", range: range.upperBound..<text.endIndex) {
-            let jsonStr = String(text[range.upperBound..<end.lowerBound])
+
+        if let drawStart = text.range(of: "<draw>"),
+           let drawEnd   = text.range(of: "</draw>", range: drawStart.upperBound..<text.endIndex) {
+            let jsonStr = String(text[drawStart.upperBound..<drawEnd.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if let jsonData = jsonStr.data(using: .utf8) {
                 drawBlock = try? JSONDecoder().decode(DrawBlock.self, from: jsonData)
             }
-            spoken = text.replacingOccurrences(
-                of: "<draw>.*?</draw>",
-                with: "",
-                options: [.regularExpression]
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            // String slicing avoids the regex bug where <draw>.*?</draw> never matched newlines.
+            spoken = (String(text[text.startIndex..<drawStart.lowerBound]) +
+                      String(text[drawEnd.upperBound..<text.endIndex]))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         return TutorReply(spoken: spoken, drawBlock: drawBlock, raw: text)
