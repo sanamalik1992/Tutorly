@@ -20,7 +20,7 @@ final class SpeechSynthesizer: NSObject {
         // Configure audio session for playback
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spoken, options: [.duckOthers])
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             print("Audio session error: \(error)")
