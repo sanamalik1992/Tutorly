@@ -11,7 +11,6 @@ final class TutorSession {
     var messages: [ChatMessage] = []
     var isThinking  = false
     var errorMessage: String?
-    var handsFree   = false
 
     // Whiteboard bridge — shared by both the Anthropic and Realtime paths
     var pendingDrawBlock: DrawBlock?
@@ -77,9 +76,7 @@ final class TutorSession {
                 drawTick &+= 1
             }
             if !reply.spoken.isEmpty {
-                synth.speak(cleanForSpeech(spoken)) { [weak self] in self?.maybeRestartMic() }
-            } else {
-                maybeRestartMic()
+                synth.speak(cleanForSpeech(spoken))
             }
         } catch {
             isThinking = false
@@ -107,14 +104,6 @@ final class TutorSession {
     }
 
     func clearBoard() { clearBoardTrigger &+= 1 }
-
-    private func maybeRestartMic() {
-        guard handsFree, recognizer.isAuthorized else { return }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 400_000_000)
-            startListening()
-        }
-    }
 
     private func cleanForSpeech(_ text: String) -> String {
         var r = text

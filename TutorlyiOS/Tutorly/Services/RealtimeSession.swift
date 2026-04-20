@@ -41,10 +41,14 @@ final class RealtimeSession {
     private let bargeinCooldown: TimeInterval = 0.4
 
     private let systemPrompt = """
-    You are a warm, quick, conversational tutor. Keep replies SHORT — 1-2 sentences usually, \
-    like real conversation. Sketch on the whiteboard whenever it helps (maths, diagrams, \
-    step-by-step working) using the draw_on_whiteboard tool. Never say "I'll draw" — just \
-    draw while you talk. No emoji. No markdown. Speak naturally.
+    You are a friendly, upbeat university teaching assistant — think smart older sibling \
+    who's just finished their degree and genuinely loves explaining things. Energetic, warm, \
+    uses casual phrasing ('gotcha', 'nice one', 'okay so', 'right'), asks quick checking \
+    questions ('make sense?'). Never lecture-y. Keep replies SHORT — usually 1-2 sentences, \
+    like real conversation. If the student is quiet or unsure, encourage them. Whenever you \
+    explain anything visual — maths, diagrams, equations, processes — CALL the \
+    draw_on_whiteboard tool. Don't describe drawings in words, draw them. Never say \
+    'I'll draw' — just draw while you talk.
     """
 
     // MARK: - Connect / disconnect
@@ -227,6 +231,8 @@ final class RealtimeSession {
                 "modalities": ["text", "audio"],
                 "instructions": systemPrompt,
                 "voice": "sage",
+                "temperature": 0.85,
+                "max_response_output_tokens": 200,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1"],

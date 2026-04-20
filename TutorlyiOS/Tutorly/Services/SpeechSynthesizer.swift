@@ -3,7 +3,7 @@ import AVFoundation
 
 enum VoiceGender: String, CaseIterable {
     case female, male
-    var label: String { self == .female ? "Girl" : "Boy" }
+    var label: String { self == .female ? "Female" : "Male" }
 }
 
 @Observable
