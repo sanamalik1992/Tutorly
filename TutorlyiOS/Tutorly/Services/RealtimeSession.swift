@@ -35,9 +35,12 @@ final class RealtimeSession {
     private let sampleRate: Double = 24_000
     private var pendingCallName: String?
     private var pendingCallId:   String?
-    // Barge-in cooldown: ignore VAD speech_started within 400ms of tutor audio finishing,
-    // so the tutor's own last syllable through the speaker can't retrigger the mic.
-    private var lastAssistantFinishTime: Date = .distantPast
+    // Hard barge-in suppression: ignore all speech_started while the assistant is responding.
+    // Prevents mic echo of tutor's own audio from cancelling the reply mid-sentence.
+    @ObservationIgnored private var isAssistantResponding = false
+    // Post-audio cooldown: ignore speech_started for 400ms after audio finishes,
+    // catching the tutor's last syllable ringing in the room.
+    @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
     private let bargeinCooldown: TimeInterval = 0.4
 
     private let systemPrompt = """
@@ -157,8 +160,19 @@ final class RealtimeSession {
             configureSession()
 
         case "input_audio_buffer.speech_started":
-            // Drop events within the cooldown window to prevent tutor echo retriggering VAD
-            guard Date().timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else { break }
+            let now = Date()
+            let speakingNow = isAssistantResponding
+            print("[VAD] speech_started at \(now) | assistantResponding=\(speakingNow)")
+            // Hard suppress: if assistant is mid-response, this is almost certainly echo
+            guard !isAssistantResponding else {
+                print("[VAD] ↳ dropped (hard suppress — assistant responding)")
+                break
+            }
+            // Soft suppress: 400 ms cooldown after audio finishes
+            guard now.timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else {
+                print("[VAD] ↳ dropped (cooldown \(String(format: "%.0f", now.timeIntervalSince(lastAssistantFinishTime) * 1000)) ms after finish)")
+                break
+            }
             player.stop(); player.play()
             Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
 
@@ -166,6 +180,7 @@ final class RealtimeSession {
             Task { @MainActor in self.isStudentSpeaking = false }
 
         case "response.created":
+            isAssistantResponding = true
             Task { @MainActor in self.isTutorSpeaking = true }
 
         case "response.output_item.added":
@@ -193,6 +208,7 @@ final class RealtimeSession {
             pendingCallName = nil; pendingCallId = nil
 
         case "response.done":
+            isAssistantResponding = false
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "error":
@@ -232,7 +248,6 @@ final class RealtimeSession {
                 "instructions": systemPrompt,
                 "voice": "sage",
                 "temperature": 0.85,
-                "max_response_output_tokens": 200,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1"],
@@ -240,7 +255,7 @@ final class RealtimeSession {
                     "type": "server_vad",
                     "threshold": 0.65,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 900,
+                    "silence_duration_ms": 1100,
                     "create_response": true,
                     "interrupt_response": true
                 ] as [String: Any],
@@ -299,7 +314,7 @@ final class RealtimeSession {
         try AVAudioSession.sharedInstance().setCategory(
             .playAndRecord, mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetooth])
-        try AVAudioSession.sharedInstance().setActive(true)
+        try AVAudioSession.sharedInstance().setActive(true, options: [.notifyOthersOnDeactivation])
 
         // Build playback graph once — survives stop/start cycles
         let playFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!

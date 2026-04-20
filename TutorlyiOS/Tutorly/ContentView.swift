@@ -1,6 +1,39 @@
 import SwiftUI
 import PencilKit
 
+// MARK: - Animated card border (shared by all cards except header)
+
+struct AnimatedCardBorder: ViewModifier {
+    let cornerRadius: CGFloat
+    let lineWidth: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content.overlay(
+            TimelineView(.animation) { timeline in
+                let angle = (timeline.date.timeIntervalSinceReferenceDate * 20)
+                    .truncatingRemainder(dividingBy: 360)
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(
+                        AngularGradient(
+                            colors: [Theme.navy, Theme.teal, Theme.amber, Theme.navy],
+                            center: .center,
+                            angle: .degrees(angle)
+                        ),
+                        lineWidth: lineWidth
+                    )
+                    .opacity(opacity)
+            }
+        )
+    }
+}
+
+extension View {
+    func animatedBorder(cornerRadius: CGFloat = 14, lineWidth: CGFloat = 1.0, opacity: Double = 0.25) -> some View {
+        modifier(AnimatedCardBorder(cornerRadius: cornerRadius, lineWidth: lineWidth, opacity: opacity))
+    }
+}
+
 // MARK: - Root
 
 struct ContentView: View {
@@ -122,7 +155,7 @@ struct ModeSubjectCard: View {
         }
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
+        .animatedBorder(cornerRadius: 14)
     }
 
     private func modeTab(_ m: TutorMode) -> some View {
@@ -195,7 +228,7 @@ struct ToolbarCard: View {
         .frame(height: 44)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+        .animatedBorder(cornerRadius: 12)
     }
 
     private func toolBtn(_ image: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -240,7 +273,7 @@ struct VoiceBarCard: View {
         .frame(height: 80)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
+        .animatedBorder(cornerRadius: 14)
     }
 
     private func statusLabel(rs: RealtimeSession) -> String {

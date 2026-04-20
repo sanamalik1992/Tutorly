@@ -341,13 +341,13 @@ struct AlwaysOnBorder: View {
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(
                     AngularGradient(
-                        colors: [Theme.navy, Theme.teal, Theme.amber, Theme.teal, Theme.navy],
+                        colors: [Theme.navy, Theme.teal, Theme.amber, Theme.navy],
                         center: .center,
                         angle: .degrees(angle)
                     ),
                     lineWidth: isActive ? 3 : 1.5
                 )
-                .opacity(isActive ? 0.95 : 0.35)
+                .opacity(isActive ? 0.70 : 0.25)
         }
     }
 }
