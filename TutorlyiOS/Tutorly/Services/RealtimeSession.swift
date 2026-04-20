@@ -5,10 +5,11 @@ import AVFoundation
 // Audio: hardware mic (48 kHz Float32) → AVAudioConverter → 24 kHz Float32 → Int16 PCM.
 // connect() is NOT called automatically — the user must tap "Connect Voice".
 //
-// PRODUCTION NOTE: For a shipped app, mint ephemeral tokens from a server endpoint
-// instead of sending the raw API key from the device.
+// Self-interruption fix: mic is gated by isAssistantResponding, which is cleared only
+// when the last audio buffer has actually played out (via a 1-frame marker buffer),
+// not when response.done fires (server-side signal, audio still playing).
 
-private let bargeInRMSThreshold: Float = 0.015   // real speech ~0.02+, echo ~0.003-0.008
+private let bargeInRMSThreshold: Float = 0.02   // 0.02+ = real speech, <0.008 = room noise
 
 @Observable
 final class RealtimeSession {
@@ -20,8 +21,6 @@ final class RealtimeSession {
     var isTutorSpeaking   = false
     var isStudentSpeaking = false
     var errorMessage: String?
-
-    // TutorSession wires this to its own pendingDrawBlock / drawTick
     var onDraw: ((DrawBlock) -> Void)?
 
     // MARK: - Private
@@ -38,14 +37,15 @@ final class RealtimeSession {
     private var pendingCallName: String?
     private var pendingCallId:   String?
 
-    // Barge-in: mic is fully suppressed while assistant speaks; RMS gate in tap fires barge-in
+    // Mic gate: stays true until the last audio frame plays out (marker completion).
+    // Cleared early only on barge-in or cancelled response.
     @ObservationIgnored private var isAssistantResponding = false
     @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
     @ObservationIgnored private var pendingBargeInTimer: Timer?
     @ObservationIgnored private var bargeInAudioRMS: Float = 0.0
-    private let bargeinCooldown: TimeInterval = 0.3   // post-response residual echo window
+    @ObservationIgnored private var audioScheduledThisResponse = false
+    private let postPlaybackCooldown: TimeInterval = 0.2   // room echo fade
 
-    // Mode toggle — updated by TutorSession.mode.didSet via updateMode()
     @ObservationIgnored var currentMode: TutorMode = .teach
 
     // MARK: - Connect / disconnect
@@ -74,31 +74,22 @@ final class RealtimeSession {
     }
 
     func disconnect() {
-        pendingBargeInTimer?.invalidate()
-        pendingBargeInTimer = nil
-        socket?.cancel(with: .goingAway, reason: nil)
-        socket = nil
+        pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
+        socket?.cancel(with: .goingAway, reason: nil); socket = nil
         if engine.isRunning {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
         }
-        converter         = nil
-        isConnected       = false
-        isTutorSpeaking   = false
-        isStudentSpeaking = false
+        converter = nil; isConnected = false; isTutorSpeaking = false; isStudentSpeaking = false
     }
 
     func toggleMute() { isMuted.toggle() }
 
     func sendText(_ text: String) {
         guard isConnected else { return }
-        send([
-            "type": "conversation.item.create",
-            "item": [
-                "type": "message", "role": "user",
-                "content": [["type": "input_text", "text": text]]
-            ] as [String: Any]
-        ])
+        send(["type": "conversation.item.create",
+              "item": ["type": "message", "role": "user",
+                       "content": [["type": "input_text", "text": text]]] as [String: Any]])
         send(["type": "response.create"])
     }
 
@@ -106,24 +97,19 @@ final class RealtimeSession {
         currentMode = mode
         guard isConnected else { return }
         print("[Session] updateMode → \(mode.rawValue)")
-        send([
-            "type": "session.update",
-            "session": ["instructions": buildInstructions(mode: mode)] as [String: Any]
-        ])
+        send(["type": "session.update",
+              "session": ["instructions": buildInstructions(mode: mode)] as [String: Any]])
     }
 
     // MARK: - WebSocket
 
     private func openSocket(key: String) {
-        var req = URLRequest(
-            url: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview")!)
+        var req = URLRequest(url: URL(string:
+            "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview")!)
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("realtime=v1",   forHTTPHeaderField: "OpenAI-Beta")
-
         socket = urlSession.webSocketTask(with: req)
-        socket?.resume()
-        isConnected = true
-        readLoop()
+        socket?.resume(); isConnected = true; readLoop()
     }
 
     private func readLoop() {
@@ -131,18 +117,11 @@ final class RealtimeSession {
             guard let self else { return }
             switch result {
             case .success(let msg):
-                switch msg {
-                case .string(let s):  self.handle(s)
-                case .data(let d):
-                    if let s = String(data: d, encoding: .utf8) { self.handle(s) }
-                @unknown default: break
-                }
+                if case .string(let s) = msg { self.handle(s) }
+                else if case .data(let d) = msg, let s = String(data: d, encoding: .utf8) { self.handle(s) }
                 self.readLoop()
             case .failure(let err):
-                Task { @MainActor in
-                    self.errorMessage = err.localizedDescription
-                    self.isConnected  = false
-                }
+                Task { @MainActor in self.errorMessage = err.localizedDescription; self.isConnected = false }
             }
         }
     }
@@ -166,13 +145,12 @@ final class RealtimeSession {
             configureSession()
 
         case "input_audio_buffer.speech_started":
-            // We suppress mic send while the assistant is responding, so this event
-            // should only arrive for genuine student speech (not echo).
-            print("[VAD] speech_started | assistantResponding=\(isAssistantResponding)")
+            // Mic is suppressed while isAssistantResponding, so this should only arrive
+            // for genuine student speech. Drop any rare race-condition event.
+            print("[VAD] speech_started | suppressed=\(isAssistantResponding)")
             guard !isAssistantResponding else { print("[VAD] ↳ dropped (race)"); break }
-            guard Date().timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else {
-                print("[VAD] ↳ dropped (cooldown)")
-                break
+            guard Date().timeIntervalSince(lastAssistantFinishTime) > postPlaybackCooldown else {
+                print("[VAD] ↳ dropped (cooldown)"); break
             }
             player.stop(); player.play()
             Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
@@ -182,7 +160,8 @@ final class RealtimeSession {
 
         case "response.created":
             isAssistantResponding = true
-            // Flush any echo that snuck into the buffer before suppression kicked in
+            audioScheduledThisResponse = false
+            // Flush any echo that entered the buffer before suppression kicked in
             send(["type": "input_audio_buffer.clear"])
             Task { @MainActor in self.isTutorSpeaking = true }
 
@@ -194,13 +173,22 @@ final class RealtimeSession {
             }
 
         case "response.audio.delta":
-            if let delta = json["delta"] as? String,
-               let pcm = Data(base64Encoded: delta) {
+            if let delta = json["delta"] as? String, let pcm = Data(base64Encoded: delta) {
+                audioScheduledThisResponse = true
                 scheduleAudio(pcm)
             }
 
         case "response.audio.done":
+            // All audio deltas received. Schedule a 1-frame silent marker buffer;
+            // its completion handler fires when the LAST audio sample has played out.
+            // This is the only correct moment to re-open the mic — not response.done,
+            // which fires while the audio queue is still draining.
             Task { @MainActor in self.isTutorSpeaking = false }
+            if audioScheduledThisResponse {
+                schedulePlaybackEndMarker()
+            } else {
+                openMicAfterPlayback()
+            }
 
         case "response.function_call_arguments.done":
             let name   = (json["name"]    as? String) ?? pendingCallName ?? ""
@@ -210,11 +198,17 @@ final class RealtimeSession {
             if name == "draw_on_whiteboard" { handleDraw(args: args, callId: callId) }
             pendingCallName = nil; pendingCallId = nil
 
-        case "response.done", "response.cancelled":
-            pendingBargeInTimer?.invalidate()
-            pendingBargeInTimer = nil
-            isAssistantResponding = false
-            lastAssistantFinishTime = Date()
+        case "response.done":
+            pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
+            // If no audio was in this response (function-call-only), re-open mic now.
+            // If audio was scheduled, the playback marker handles it.
+            if !audioScheduledThisResponse { openMicAfterPlayback() }
+            Task { @MainActor in self.isTutorSpeaking = false }
+
+        case "response.cancelled":
+            // Barge-in already cleared state; ensure clean regardless.
+            pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
+            openMicAfterPlayback()
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "error":
@@ -226,27 +220,46 @@ final class RealtimeSession {
         }
     }
 
+    // Re-opens the mic (clears the suppression flag + sets cooldown start).
+    // Called from: playback marker completion, barge-in, cancelled, no-audio response.done.
+    private func openMicAfterPlayback() {
+        isAssistantResponding  = false
+        lastAssistantFinishTime = Date()
+        print("[Audio] mic reopened")
+    }
+
+    // Schedule a 1-frame silence buffer whose completion fires when the audio queue drains.
+    private func schedulePlaybackEndMarker() {
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+              let marker = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 1) else {
+            openMicAfterPlayback(); return
+        }
+        marker.frameLength = 1
+        marker.floatChannelData?[0][0] = 0
+        player.scheduleBuffer(marker, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            // Fires on audio thread when the marker (and all prior buffers) have played out.
+            guard let self, self.isAssistantResponding else { return }
+            DispatchQueue.main.async { self.openMicAfterPlayback() }
+        }
+    }
+
     // MARK: - Barge-in from mic tap
 
-    // Called from the audio tap when isAssistantResponding is true.
-    // Monitors RMS; if sustained loud enough, fires response.cancel so the student can speak.
     private func checkBargeInFromTap() {
         guard bargeInAudioRMS >= bargeInRMSThreshold else {
-            // Energy dropped — cancel any pending barge-in window
-            if pendingBargeInTimer != nil {
-                pendingBargeInTimer?.invalidate()
-                pendingBargeInTimer = nil
-            }
+            if pendingBargeInTimer != nil { pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil }
             return
         }
-        guard pendingBargeInTimer == nil else { return }   // already counting down
-        print("[VAD] barge-in gate open (RMS \(String(format: "%.4f", bargeInAudioRMS))) — 300ms window")
+        guard pendingBargeInTimer == nil else { return }
+        print("[VAD] barge-in gate open (RMS \(String(format: "%.4f", bargeInAudioRMS)))")
         pendingBargeInTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
             guard let self else { return }
             DispatchQueue.main.async {
-                print("[VAD] barge-in confirmed — sending response.cancel")
+                print("[VAD] barge-in confirmed — cancelling response")
                 self.pendingBargeInTimer = nil
                 self.player.stop(); self.player.play()
+                // Explicitly clear — marker completion won't fire after player.stop()
+                self.openMicAfterPlayback()
                 self.isTutorSpeaking   = false
                 self.isStudentSpeaking = true
                 self.send(["type": "response.cancel"])
@@ -266,7 +279,7 @@ final class RealtimeSession {
     // MARK: - Draw tool
 
     private func handleDraw(args: String, callId: String) {
-        print("[Draw] raw args (\(args.count) chars): \(args.prefix(300))")
+        print("[Draw] args (\(args.count)c): \(args.prefix(200))")
         if let d = args.data(using: .utf8) {
             do {
                 let block = try JSONDecoder().decode(DrawBlock.self, from: d)
@@ -276,14 +289,9 @@ final class RealtimeSession {
                 print("[Draw] decode error: \(error)")
             }
         }
-        send([
-            "type": "conversation.item.create",
-            "item": [
-                "type": "function_call_output",
-                "call_id": callId,
-                "output": "{\"ok\":true}"
-            ] as [String: Any]
-        ])
+        send(["type": "conversation.item.create",
+              "item": ["type": "function_call_output", "call_id": callId,
+                       "output": "{\"ok\":true}"] as [String: Any]])
         send(["type": "response.create"])
     }
 
@@ -303,9 +311,9 @@ final class RealtimeSession {
                 "input_audio_transcription": ["model": "whisper-1"],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": 0.65,
+                    "threshold": 0.5,         // more sensitive — ChatGPT-like responsiveness
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1100,
+                    "silence_duration_ms": 600, // 600ms feels natural; 1100ms was too sluggish
                     "create_response": true,
                     "interrupt_response": true
                 ] as [String: Any],
@@ -323,11 +331,10 @@ final class RealtimeSession {
         questions ('make sense?'). Never lecture-y. Keep replies SHORT — usually 1-2 sentences, \
         like real conversation. If the student is quiet or unsure, encourage them.
 
-        WHITEBOARD RULE — YOU MUST FOLLOW THIS: Every single time you explain ANYTHING that has \
-        a visual component — an equation, a diagram, a process, a graph, code, a timeline, steps, \
-        a formula, a concept map — you MUST call draw_on_whiteboard. No exceptions. Do not say \
-        'I'll draw' or 'let me show you' — just call the tool immediately, mid-sentence if needed. \
-        Even for a simple equation like x=2, draw it. Even for a 2-step process, draw it. \
+        WHITEBOARD RULE — NO EXCEPTIONS: Every time you explain anything visual — an equation, \
+        a diagram, a process, a graph, code, a timeline, steps, a formula — call \
+        draw_on_whiteboard immediately. Do not say 'I'll draw' or 'let me show you' — just call \
+        the tool mid-sentence. Even a simple equation like x=2 deserves a draw call. \
         The student learns visually. Draw first, talk second.
         """
         switch mode {
@@ -343,38 +350,33 @@ final class RealtimeSession {
             "type": "function",
             "name": "draw_on_whiteboard",
             "description": """
-                Annotate the student's whiteboard with diagrams, equations, labels, and visual aids. \
-                Call this for any explanation with a visual element — equations, steps, diagrams, graphs. \
-                Canvas is 900 × 600, origin top-left. Palette: #1E3A8A navy, #E09C1F amber, \
-                #3D9396 teal, #C0392B red. Use 1-10 commands per call.
+                Annotate the student's whiteboard. Call for any explanation with a visual \
+                element — equations, steps, diagrams, graphs, code. Canvas 900×600, origin \
+                top-left. Colors: #1E3A8A navy, #E09C1F amber, #3D9396 teal, #C0392B red.
                 """,
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "clear": [
-                        "type": "boolean",
-                        "description": "Wipe the board before drawing (use for a fresh topic)"
-                    ],
+                    "clear": ["type": "boolean", "description": "Wipe board before drawing"],
                     "commands": [
                         "type": "array",
-                        "description": "Ordered draw commands, 1-10 per call.",
+                        "description": "1-10 ordered draw commands.",
                         "minItems": 1,
                         "items": [
                             "type": "object",
                             "properties": [
                                 "type":  ["type": "string",
                                           "enum": ["text", "line", "arrow", "circle", "rect"]],
-                                "x":     ["type": "number", "description": "text/rect anchor x"],
-                                "y":     ["type": "number", "description": "text/rect anchor y"],
-                                "text":  ["type": "string"],
-                                "size":  ["type": "number", "description": "font size, default 18"],
+                                "x": ["type": "number"], "y": ["type": "number"],
+                                "text": ["type": "string"],
+                                "size": ["type": "number", "description": "font size, default 18"],
                                 "color": ["type": "string", "description": "hex color"],
                                 "x1": ["type": "number"], "y1": ["type": "number"],
                                 "x2": ["type": "number"], "y2": ["type": "number"],
                                 "cx": ["type": "number"], "cy": ["type": "number"],
                                 "r":  ["type": "number"],
-                                "w":  ["type": "number"], "h":  ["type": "number"],
-                                "fill":  ["type": "boolean"],
+                                "w":  ["type": "number"], "h": ["type": "number"],
+                                "fill": ["type": "boolean"],
                                 "width": ["type": "number", "description": "stroke width, default 2"]
                             ] as [String: Any],
                             "required": ["type"]
@@ -407,7 +409,7 @@ final class RealtimeSession {
         guard let conv = AVAudioConverter(from: hwFmt, to: monoFmt) else {
             throw NSError(domain: "RealtimeSession", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Cannot create audio converter " +
-                    "(\(Int(hwFmt.sampleRate)) Hz → \(Int(sampleRate)) Hz)"
+                "\(Int(hwFmt.sampleRate)) Hz → \(Int(sampleRate)) Hz"
             ])
         }
         converter = conv
@@ -421,41 +423,32 @@ final class RealtimeSession {
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: outLen) else { return }
 
             var convErr: NSError?
-            conv.convert(to: outBuf, error: &convErr) { _, outStatus in
-                outStatus.pointee = .haveData
-                return buf
-            }
+            conv.convert(to: outBuf, error: &convErr) { _, status in status.pointee = .haveData; return buf }
             guard convErr == nil, outBuf.frameLength > 0,
                   let ch = outBuf.floatChannelData?[0] else { return }
 
-            // Always track RMS (used for barge-in detection)
             self.updateBargeInRMS(buffer: outBuf)
 
-            // ── KEY FIX ──────────────────────────────────────────────────────────
-            // Do NOT send mic audio to the server while the assistant is speaking.
-            // This is why the AI was talking to itself: echo from the speaker was
-            // reaching the server VAD even with voiceChat AEC. By returning here,
-            // zero echo reaches the buffer. Genuine barge-in is handled via RMS.
-            // ────────────────────────────────────────────────────────────────────
+            // ── MIC GATE ─────────────────────────────────────────────────────────
+            // Do NOT send audio to the server while the assistant is speaking.
+            // isAssistantResponding stays true until the LAST audio frame plays out
+            // (via playback end marker), preventing echo from reaching the server VAD.
+            // ─────────────────────────────────────────────────────────────────────
             if self.isAssistantResponding {
                 self.checkBargeInFromTap()
                 return
             }
-
-            // Post-response cooldown: residual echo for ~300ms after response ends
-            guard Date().timeIntervalSince(self.lastAssistantFinishTime) > self.bargeinCooldown
+            // Short post-playback cooldown for room echo fade
+            guard Date().timeIntervalSince(self.lastAssistantFinishTime) > self.postPlaybackCooldown
             else { return }
 
-            // Float32 → Int16 PCM16 with clamping
             let n = Int(outBuf.frameLength)
             var i16 = [Int16](repeating: 0, count: n)
             for i in 0..<n {
-                let s = max(-32_767.0, min(32_767.0, ch[i] * 32_767.0))
-                i16[i] = Int16(s)
+                i16[i] = Int16(max(-32_767.0, min(32_767.0, ch[i] * 32_767.0)))
             }
             let bytes = i16.withUnsafeBytes { Data($0) }
-            self.send(["type": "input_audio_buffer.append",
-                       "audio": bytes.base64EncodedString()])
+            self.send(["type": "input_audio_buffer.append", "audio": bytes.base64EncodedString()])
         }
 
         engine.prepare()
