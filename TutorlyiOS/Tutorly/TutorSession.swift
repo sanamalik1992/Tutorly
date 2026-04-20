@@ -6,7 +6,9 @@ final class TutorSession {
 
     // MARK: - UI state
 
-    var mode: TutorMode = .teach
+    var mode: TutorMode = .teach {
+        didSet { realtimeSession.updateMode(mode) }
+    }
     var subject: String = ""
     var messages: [ChatMessage] = []
     var isThinking  = false

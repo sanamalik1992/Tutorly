@@ -8,6 +8,8 @@ import AVFoundation
 // PRODUCTION NOTE: For a shipped app, mint ephemeral tokens from a server endpoint
 // instead of sending the raw API key from the device.
 
+private let bargeInRMSThreshold: Float = 0.015   // real speech ~0.02+, echo ~0.003-0.008
+
 @Observable
 final class RealtimeSession {
 
@@ -35,24 +37,17 @@ final class RealtimeSession {
     private let sampleRate: Double = 24_000
     private var pendingCallName: String?
     private var pendingCallId:   String?
-    // Hard barge-in suppression: ignore all speech_started while the assistant is responding.
-    // Prevents mic echo of tutor's own audio from cancelling the reply mid-sentence.
-    @ObservationIgnored private var isAssistantResponding = false
-    // Post-audio cooldown: ignore speech_started for 400ms after audio finishes,
-    // catching the tutor's last syllable ringing in the room.
-    @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
-    private let bargeinCooldown: TimeInterval = 0.4
 
-    private let systemPrompt = """
-    You are a friendly, upbeat university teaching assistant — think smart older sibling \
-    who's just finished their degree and genuinely loves explaining things. Energetic, warm, \
-    uses casual phrasing ('gotcha', 'nice one', 'okay so', 'right'), asks quick checking \
-    questions ('make sense?'). Never lecture-y. Keep replies SHORT — usually 1-2 sentences, \
-    like real conversation. If the student is quiet or unsure, encourage them. Whenever you \
-    explain anything visual — maths, diagrams, equations, processes — CALL the \
-    draw_on_whiteboard tool. Don't describe drawings in words, draw them. Never say \
-    'I'll draw' — just draw while you talk.
-    """
+    // Barge-in: RMS gate + reduced cooldown
+    @ObservationIgnored private var isAssistantResponding = false
+    @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
+    @ObservationIgnored private var lastSpeechStartedTime: Date = .distantPast
+    @ObservationIgnored private var pendingBargeInTimer: Timer?
+    @ObservationIgnored private var bargeInAudioRMS: Float = 0.0
+    private let bargeinCooldown: TimeInterval = 0.25
+
+    // Mode toggle — updated by TutorSession.mode.didSet via updateMode()
+    @ObservationIgnored var currentMode: TutorMode = .teach
 
     // MARK: - Connect / disconnect
 
@@ -80,6 +75,8 @@ final class RealtimeSession {
     }
 
     func disconnect() {
+        pendingBargeInTimer?.invalidate()
+        pendingBargeInTimer = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         if engine.isRunning {
@@ -104,6 +101,16 @@ final class RealtimeSession {
             ] as [String: Any]
         ])
         send(["type": "response.create"])
+    }
+
+    func updateMode(_ mode: TutorMode) {
+        currentMode = mode
+        guard isConnected else { return }
+        print("[Session] updateMode → \(mode.rawValue), sending session.update")
+        send([
+            "type": "session.update",
+            "session": ["instructions": buildInstructions(mode: mode)] as [String: Any]
+        ])
     }
 
     // MARK: - WebSocket
@@ -161,22 +168,26 @@ final class RealtimeSession {
 
         case "input_audio_buffer.speech_started":
             let now = Date()
-            let speakingNow = isAssistantResponding
-            print("[VAD] speech_started at \(now) | assistantResponding=\(speakingNow)")
-            // Hard suppress: if assistant is mid-response, this is almost certainly echo
-            guard !isAssistantResponding else {
-                print("[VAD] ↳ dropped (hard suppress — assistant responding)")
-                break
+            lastSpeechStartedTime = now
+            print("[VAD] speech_started | assistantResponding=\(isAssistantResponding) rms=\(String(format: "%.4f", bargeInAudioRMS))")
+            if isAssistantResponding {
+                handleSpeechStartedDuringAssistantResponse()
+            } else {
+                guard now.timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else {
+                    print("[VAD] ↳ dropped (cooldown \(String(format: "%.0f", now.timeIntervalSince(lastAssistantFinishTime) * 1000))ms)")
+                    break
+                }
+                player.stop(); player.play()
+                Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
             }
-            // Soft suppress: 400 ms cooldown after audio finishes
-            guard now.timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else {
-                print("[VAD] ↳ dropped (cooldown \(String(format: "%.0f", now.timeIntervalSince(lastAssistantFinishTime) * 1000)) ms after finish)")
-                break
-            }
-            player.stop(); player.play()
-            Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
 
         case "input_audio_buffer.speech_stopped":
+            let elapsed = Date().timeIntervalSince(lastSpeechStartedTime) * 1_000
+            if elapsed < 150 {
+                print("[VAD] speech_stopped after \(String(format: "%.0f", elapsed))ms — cancelling barge-in timer (false positive)")
+                pendingBargeInTimer?.invalidate()
+                pendingBargeInTimer = nil
+            }
             Task { @MainActor in self.isStudentSpeaking = false }
 
         case "response.created":
@@ -208,6 +219,8 @@ final class RealtimeSession {
             pendingCallName = nil; pendingCallId = nil
 
         case "response.done":
+            pendingBargeInTimer?.invalidate()
+            pendingBargeInTimer = nil
             isAssistantResponding = false
             Task { @MainActor in self.isTutorSpeaking = false }
 
@@ -220,11 +233,43 @@ final class RealtimeSession {
         }
     }
 
+    // MARK: - Smart barge-in
+
+    private func handleSpeechStartedDuringAssistantResponse() {
+        let rms = bargeInAudioRMS
+        guard rms >= bargeInRMSThreshold else {
+            print("[VAD] ↳ dropped (RMS \(String(format: "%.4f", rms)) < threshold \(bargeInRMSThreshold))")
+            return
+        }
+        print("[VAD] ↳ RMS \(String(format: "%.4f", rms)) passes gate — scheduling barge-in (300ms)")
+        pendingBargeInTimer?.invalidate()
+        pendingBargeInTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                print("[VAD] ↳ barge-in confirmed — interrupting tutor")
+                self.pendingBargeInTimer = nil
+                self.player.stop(); self.player.play()
+                self.isTutorSpeaking   = false
+                self.isStudentSpeaking = true
+            }
+        }
+    }
+
+    private func updateBargeInRMS(buffer: AVAudioPCMBuffer) {
+        guard let ch = buffer.floatChannelData?[0] else { return }
+        let n = Int(buffer.frameLength)
+        guard n > 0 else { return }
+        var sum: Float = 0
+        for i in 0..<n { sum += ch[i] * ch[i] }
+        bargeInAudioRMS = sqrt(sum / Float(n))
+    }
+
     // MARK: - Draw tool
 
     private func handleDraw(args: String, callId: String) {
         if let d = args.data(using: .utf8),
            let block = try? JSONDecoder().decode(DrawBlock.self, from: d) {
+            print("[Draw] received \(block.commands.count) commands")
             Task { @MainActor in self.onDraw?(block) }
         }
         send([
@@ -241,11 +286,12 @@ final class RealtimeSession {
     // MARK: - Session configuration
 
     private func configureSession() {
+        print("[Session] configuring with mode=\(currentMode.rawValue) — sending session.update")
         send([
             "type": "session.update",
             "session": [
                 "modalities": ["text", "audio"],
-                "instructions": systemPrompt,
+                "instructions": buildInstructions(mode: currentMode),
                 "voice": "sage",
                 "temperature": 0.85,
                 "input_audio_format": "pcm16",
@@ -263,6 +309,28 @@ final class RealtimeSession {
                 "tool_choice": "auto"
             ] as [String: Any]
         ])
+    }
+
+    private func buildInstructions(mode: TutorMode) -> String {
+        let base = """
+        You are a friendly, upbeat university teaching assistant — think smart older sibling \
+        who's just finished their degree and genuinely loves explaining things. Energetic, warm, \
+        uses casual phrasing ('gotcha', 'nice one', 'okay so', 'right'), asks quick checking \
+        questions ('make sense?'). Never lecture-y. Keep replies SHORT — usually 1-2 sentences, \
+        like real conversation. If the student is quiet or unsure, encourage them.
+
+        CRITICAL — USE THE WHITEBOARD: You MUST call draw_on_whiteboard for EVERY explanation \
+        that involves anything visual: maths steps, equations, diagrams, graphs, flow charts, \
+        labelled figures, code structure, timelines. Do NOT describe drawings in words — DRAW \
+        THEM. Call the tool immediately as you start explaining. Never say 'I'll draw' or \
+        'let me show you' — just call draw_on_whiteboard and talk simultaneously.
+        """
+        switch mode {
+        case .teach:
+            return base + "\n\nMode: TEACH. Walk the student through concepts step-by-step. Draw each step on the whiteboard as you explain it."
+        case .quiz:
+            return base + "\n\nMode: QUIZ. Ask questions one at a time. After each answer, use the whiteboard to show the correct working or diagram."
+        }
     }
 
     private func drawToolSchema() -> [String: Any] {
@@ -353,6 +421,9 @@ final class RealtimeSession {
             }
             guard convErr == nil, outBuf.frameLength > 0,
                   let ch = outBuf.floatChannelData?[0] else { return }
+
+            // Update RMS for smart barge-in detection
+            self.updateBargeInRMS(buffer: outBuf)
 
             // Float32 → Int16 PCM16 with clamping
             let n = Int(outBuf.frameLength)
