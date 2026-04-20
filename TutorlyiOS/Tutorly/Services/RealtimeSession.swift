@@ -35,6 +35,10 @@ final class RealtimeSession {
     private let sampleRate: Double = 24_000
     private var pendingCallName: String?
     private var pendingCallId:   String?
+    // Barge-in cooldown: ignore VAD speech_started within 400ms of tutor audio finishing,
+    // so the tutor's own last syllable through the speaker can't retrigger the mic.
+    private var lastAssistantFinishTime: Date = .distantPast
+    private let bargeinCooldown: TimeInterval = 0.4
 
     private let systemPrompt = """
     You are a warm, quick, conversational tutor. Keep replies SHORT — 1-2 sentences usually, \
@@ -149,6 +153,8 @@ final class RealtimeSession {
             configureSession()
 
         case "input_audio_buffer.speech_started":
+            // Drop events within the cooldown window to prevent tutor echo retriggering VAD
+            guard Date().timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else { break }
             player.stop(); player.play()
             Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
 
@@ -172,6 +178,7 @@ final class RealtimeSession {
             }
 
         case "response.audio.done":
+            lastAssistantFinishTime = Date()
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "response.function_call_arguments.done":
@@ -225,9 +232,11 @@ final class RealtimeSession {
                 "input_audio_transcription": ["model": "whisper-1"],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": 0.5,
+                    "threshold": 0.65,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 700
+                    "silence_duration_ms": 900,
+                    "create_response": true,
+                    "interrupt_response": true
                 ] as [String: Any],
                 "tools": [drawToolSchema()],
                 "tool_choice": "auto"
