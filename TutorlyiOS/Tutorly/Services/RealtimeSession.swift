@@ -32,19 +32,18 @@ final class RealtimeSession {
     private let engine     = AVAudioEngine()
     private let player     = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
-    private var isEngineGraphBuilt = false   // engine.attach/connect are one-time ops
+    private var isEngineGraphBuilt = false
 
     private let sampleRate: Double = 24_000
     private var pendingCallName: String?
     private var pendingCallId:   String?
 
-    // Barge-in: RMS gate + reduced cooldown
+    // Barge-in: mic is fully suppressed while assistant speaks; RMS gate in tap fires barge-in
     @ObservationIgnored private var isAssistantResponding = false
     @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
-    @ObservationIgnored private var lastSpeechStartedTime: Date = .distantPast
     @ObservationIgnored private var pendingBargeInTimer: Timer?
     @ObservationIgnored private var bargeInAudioRMS: Float = 0.0
-    private let bargeinCooldown: TimeInterval = 0.25
+    private let bargeinCooldown: TimeInterval = 0.3   // post-response residual echo window
 
     // Mode toggle — updated by TutorSession.mode.didSet via updateMode()
     @ObservationIgnored var currentMode: TutorMode = .teach
@@ -106,7 +105,7 @@ final class RealtimeSession {
     func updateMode(_ mode: TutorMode) {
         currentMode = mode
         guard isConnected else { return }
-        print("[Session] updateMode → \(mode.rawValue), sending session.update")
+        print("[Session] updateMode → \(mode.rawValue)")
         send([
             "type": "session.update",
             "session": ["instructions": buildInstructions(mode: mode)] as [String: Any]
@@ -167,31 +166,24 @@ final class RealtimeSession {
             configureSession()
 
         case "input_audio_buffer.speech_started":
-            let now = Date()
-            lastSpeechStartedTime = now
-            print("[VAD] speech_started | assistantResponding=\(isAssistantResponding) rms=\(String(format: "%.4f", bargeInAudioRMS))")
-            if isAssistantResponding {
-                handleSpeechStartedDuringAssistantResponse()
-            } else {
-                guard now.timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else {
-                    print("[VAD] ↳ dropped (cooldown \(String(format: "%.0f", now.timeIntervalSince(lastAssistantFinishTime) * 1000))ms)")
-                    break
-                }
-                player.stop(); player.play()
-                Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
+            // We suppress mic send while the assistant is responding, so this event
+            // should only arrive for genuine student speech (not echo).
+            print("[VAD] speech_started | assistantResponding=\(isAssistantResponding)")
+            guard !isAssistantResponding else { print("[VAD] ↳ dropped (race)"); break }
+            guard Date().timeIntervalSince(lastAssistantFinishTime) > bargeinCooldown else {
+                print("[VAD] ↳ dropped (cooldown)")
+                break
             }
+            player.stop(); player.play()
+            Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
 
         case "input_audio_buffer.speech_stopped":
-            let elapsed = Date().timeIntervalSince(lastSpeechStartedTime) * 1_000
-            if elapsed < 150 {
-                print("[VAD] speech_stopped after \(String(format: "%.0f", elapsed))ms — cancelling barge-in timer (false positive)")
-                pendingBargeInTimer?.invalidate()
-                pendingBargeInTimer = nil
-            }
             Task { @MainActor in self.isStudentSpeaking = false }
 
         case "response.created":
             isAssistantResponding = true
+            // Flush any echo that snuck into the buffer before suppression kicked in
+            send(["type": "input_audio_buffer.clear"])
             Task { @MainActor in self.isTutorSpeaking = true }
 
         case "response.output_item.added":
@@ -208,20 +200,21 @@ final class RealtimeSession {
             }
 
         case "response.audio.done":
-            lastAssistantFinishTime = Date()
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "response.function_call_arguments.done":
             let name   = (json["name"]    as? String) ?? pendingCallName ?? ""
             let callId = (json["call_id"] as? String) ?? pendingCallId   ?? ""
             let args   = (json["arguments"] as? String) ?? ""
+            print("[Tool] function call: \(name)")
             if name == "draw_on_whiteboard" { handleDraw(args: args, callId: callId) }
             pendingCallName = nil; pendingCallId = nil
 
-        case "response.done":
+        case "response.done", "response.cancelled":
             pendingBargeInTimer?.invalidate()
             pendingBargeInTimer = nil
             isAssistantResponding = false
+            lastAssistantFinishTime = Date()
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "error":
@@ -233,24 +226,30 @@ final class RealtimeSession {
         }
     }
 
-    // MARK: - Smart barge-in
+    // MARK: - Barge-in from mic tap
 
-    private func handleSpeechStartedDuringAssistantResponse() {
-        let rms = bargeInAudioRMS
-        guard rms >= bargeInRMSThreshold else {
-            print("[VAD] ↳ dropped (RMS \(String(format: "%.4f", rms)) < threshold \(bargeInRMSThreshold))")
+    // Called from the audio tap when isAssistantResponding is true.
+    // Monitors RMS; if sustained loud enough, fires response.cancel so the student can speak.
+    private func checkBargeInFromTap() {
+        guard bargeInAudioRMS >= bargeInRMSThreshold else {
+            // Energy dropped — cancel any pending barge-in window
+            if pendingBargeInTimer != nil {
+                pendingBargeInTimer?.invalidate()
+                pendingBargeInTimer = nil
+            }
             return
         }
-        print("[VAD] ↳ RMS \(String(format: "%.4f", rms)) passes gate — scheduling barge-in (300ms)")
-        pendingBargeInTimer?.invalidate()
+        guard pendingBargeInTimer == nil else { return }   // already counting down
+        print("[VAD] barge-in gate open (RMS \(String(format: "%.4f", bargeInAudioRMS))) — 300ms window")
         pendingBargeInTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
             guard let self else { return }
             DispatchQueue.main.async {
-                print("[VAD] ↳ barge-in confirmed — interrupting tutor")
+                print("[VAD] barge-in confirmed — sending response.cancel")
                 self.pendingBargeInTimer = nil
                 self.player.stop(); self.player.play()
                 self.isTutorSpeaking   = false
                 self.isStudentSpeaking = true
+                self.send(["type": "response.cancel"])
             }
         }
     }
@@ -267,10 +266,15 @@ final class RealtimeSession {
     // MARK: - Draw tool
 
     private func handleDraw(args: String, callId: String) {
-        if let d = args.data(using: .utf8),
-           let block = try? JSONDecoder().decode(DrawBlock.self, from: d) {
-            print("[Draw] received \(block.commands.count) commands")
-            Task { @MainActor in self.onDraw?(block) }
+        print("[Draw] raw args (\(args.count) chars): \(args.prefix(300))")
+        if let d = args.data(using: .utf8) {
+            do {
+                let block = try JSONDecoder().decode(DrawBlock.self, from: d)
+                print("[Draw] decoded \(block.commands.count) commands, clear=\(block.clear ?? false)")
+                Task { @MainActor in self.onDraw?(block) }
+            } catch {
+                print("[Draw] decode error: \(error)")
+            }
         }
         send([
             "type": "conversation.item.create",
@@ -286,7 +290,7 @@ final class RealtimeSession {
     // MARK: - Session configuration
 
     private func configureSession() {
-        print("[Session] configuring with mode=\(currentMode.rawValue) — sending session.update")
+        print("[Session] configuring mode=\(currentMode.rawValue)")
         send([
             "type": "session.update",
             "session": [
@@ -319,17 +323,18 @@ final class RealtimeSession {
         questions ('make sense?'). Never lecture-y. Keep replies SHORT — usually 1-2 sentences, \
         like real conversation. If the student is quiet or unsure, encourage them.
 
-        CRITICAL — USE THE WHITEBOARD: You MUST call draw_on_whiteboard for EVERY explanation \
-        that involves anything visual: maths steps, equations, diagrams, graphs, flow charts, \
-        labelled figures, code structure, timelines. Do NOT describe drawings in words — DRAW \
-        THEM. Call the tool immediately as you start explaining. Never say 'I'll draw' or \
-        'let me show you' — just call draw_on_whiteboard and talk simultaneously.
+        WHITEBOARD RULE — YOU MUST FOLLOW THIS: Every single time you explain ANYTHING that has \
+        a visual component — an equation, a diagram, a process, a graph, code, a timeline, steps, \
+        a formula, a concept map — you MUST call draw_on_whiteboard. No exceptions. Do not say \
+        'I'll draw' or 'let me show you' — just call the tool immediately, mid-sentence if needed. \
+        Even for a simple equation like x=2, draw it. Even for a 2-step process, draw it. \
+        The student learns visually. Draw first, talk second.
         """
         switch mode {
         case .teach:
-            return base + "\n\nMode: TEACH. Walk the student through concepts step-by-step. Draw each step on the whiteboard as you explain it."
+            return base + "\n\nMode: TEACH. Explain step-by-step and draw EVERY step on the whiteboard as you go."
         case .quiz:
-            return base + "\n\nMode: QUIZ. Ask questions one at a time. After each answer, use the whiteboard to show the correct working or diagram."
+            return base + "\n\nMode: QUIZ. Ask one question at a time. After each answer, draw the correct working on the whiteboard."
         }
     }
 
@@ -338,34 +343,39 @@ final class RealtimeSession {
             "type": "function",
             "name": "draw_on_whiteboard",
             "description": """
-                Draw diagrams, equations, and visual aids on the student's whiteboard.
-                Use for maths steps, flow charts, concept maps, labelled figures.
-                Canvas is 900 wide x 600 tall, origin top-left. Colors: \
-                #1E3A8A navy, #E09C1F amber, #3D9396 teal, #C0392B red.
+                Annotate the student's whiteboard with diagrams, equations, labels, and visual aids. \
+                Call this for any explanation with a visual element — equations, steps, diagrams, graphs. \
+                Canvas is 900 × 600, origin top-left. Palette: #1E3A8A navy, #E09C1F amber, \
+                #3D9396 teal, #C0392B red. Use 1-10 commands per call.
                 """,
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "clear": ["type": "boolean",
-                              "description": "true to wipe the board before drawing"],
+                    "clear": [
+                        "type": "boolean",
+                        "description": "Wipe the board before drawing (use for a fresh topic)"
+                    ],
                     "commands": [
                         "type": "array",
-                        "description": "Draw commands. Include 3-8 per call.",
+                        "description": "Ordered draw commands, 1-10 per call.",
+                        "minItems": 1,
                         "items": [
                             "type": "object",
                             "properties": [
                                 "type":  ["type": "string",
-                                          "enum": ["text","line","arrow","circle","rect"]],
-                                "x":     ["type": "number"], "y":  ["type": "number"],
+                                          "enum": ["text", "line", "arrow", "circle", "rect"]],
+                                "x":     ["type": "number", "description": "text/rect anchor x"],
+                                "y":     ["type": "number", "description": "text/rect anchor y"],
                                 "text":  ["type": "string"],
-                                "size":  ["type": "number"], "color": ["type": "string"],
+                                "size":  ["type": "number", "description": "font size, default 18"],
+                                "color": ["type": "string", "description": "hex color"],
                                 "x1": ["type": "number"], "y1": ["type": "number"],
                                 "x2": ["type": "number"], "y2": ["type": "number"],
                                 "cx": ["type": "number"], "cy": ["type": "number"],
                                 "r":  ["type": "number"],
                                 "w":  ["type": "number"], "h":  ["type": "number"],
                                 "fill":  ["type": "boolean"],
-                                "width": ["type": "number"]
+                                "width": ["type": "number", "description": "stroke width, default 2"]
                             ] as [String: Any],
                             "required": ["type"]
                         ] as [String: Any]
@@ -384,7 +394,6 @@ final class RealtimeSession {
             options: [.defaultToSpeaker, .allowBluetooth])
         try AVAudioSession.sharedInstance().setActive(true, options: [.notifyOthersOnDeactivation])
 
-        // Build playback graph once — survives stop/start cycles
         let playFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         if !isEngineGraphBuilt {
             engine.attach(player)
@@ -392,9 +401,6 @@ final class RealtimeSession {
             isEngineGraphBuilt = true
         }
 
-        // Hardware input format (typically 48 kHz Float32, possibly stereo).
-        // Install tap at hardware's native format to avoid "format mismatch" crash,
-        // then resample to 24 kHz mono Float32 via AVAudioConverter.
         let hwFmt   = engine.inputNode.outputFormat(forBus: 0)
         let monoFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
 
@@ -422,8 +428,23 @@ final class RealtimeSession {
             guard convErr == nil, outBuf.frameLength > 0,
                   let ch = outBuf.floatChannelData?[0] else { return }
 
-            // Update RMS for smart barge-in detection
+            // Always track RMS (used for barge-in detection)
             self.updateBargeInRMS(buffer: outBuf)
+
+            // ── KEY FIX ──────────────────────────────────────────────────────────
+            // Do NOT send mic audio to the server while the assistant is speaking.
+            // This is why the AI was talking to itself: echo from the speaker was
+            // reaching the server VAD even with voiceChat AEC. By returning here,
+            // zero echo reaches the buffer. Genuine barge-in is handled via RMS.
+            // ────────────────────────────────────────────────────────────────────
+            if self.isAssistantResponding {
+                self.checkBargeInFromTap()
+                return
+            }
+
+            // Post-response cooldown: residual echo for ~300ms after response ends
+            guard Date().timeIntervalSince(self.lastAssistantFinishTime) > self.bargeinCooldown
+            else { return }
 
             // Float32 → Int16 PCM16 with clamping
             let n = Int(outBuf.frameLength)
