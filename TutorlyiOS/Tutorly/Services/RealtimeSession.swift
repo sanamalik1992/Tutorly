@@ -2,21 +2,20 @@ import Foundation
 import AVFoundation
 
 // RealtimeSession connects to the OpenAI Realtime API over WebSocket.
-// The mic is live immediately on connect; server-side VAD handles turn detection.
-// The model calls draw_on_whiteboard to sketch on the board while speaking.
+// Audio: hardware mic (48 kHz Float32) → AVAudioConverter → 24 kHz Float32 → Int16 PCM.
+// connect() is NOT called automatically — the user must tap "Connect Voice".
 //
 // PRODUCTION NOTE: For a shipped app, mint ephemeral tokens from a server endpoint
 // instead of sending the raw API key from the device.
-// See: https://platform.openai.com/docs/guides/realtime#ephemeral-tokens
 
 @Observable
 final class RealtimeSession {
 
     // MARK: - Observable state
 
-    var isConnected     = false
-    var isMuted         = false
-    var isTutorSpeaking = false
+    var isConnected       = false
+    var isMuted           = false
+    var isTutorSpeaking   = false
     var isStudentSpeaking = false
     var errorMessage: String?
 
@@ -30,6 +29,8 @@ final class RealtimeSession {
 
     private let engine     = AVAudioEngine()
     private let player     = AVAudioPlayerNode()
+    private var converter: AVAudioConverter?
+    private var isEngineGraphBuilt = false   // engine.attach/connect are one-time ops
 
     private let sampleRate: Double = 24_000
     private var pendingCallName: String?
@@ -56,17 +57,27 @@ final class RealtimeSession {
                 await MainActor.run { self.errorMessage = "Microphone access denied." }
                 return
             }
-            await MainActor.run { self.openSocket(key: key) }
+            await MainActor.run {
+                do {
+                    try self.setupAudio()
+                    self.openSocket(key: key)
+                } catch {
+                    self.errorMessage = "Audio setup failed: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
     func disconnect() {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
-        engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
-        isConnected     = false
-        isTutorSpeaking = false
+        if engine.isRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        converter         = nil
+        isConnected       = false
+        isTutorSpeaking   = false
         isStudentSpeaking = false
     }
 
@@ -95,9 +106,7 @@ final class RealtimeSession {
         socket = urlSession.webSocketTask(with: req)
         socket?.resume()
         isConnected = true
-
         readLoop()
-        setupAudio()
     }
 
     private func readLoop() {
@@ -106,7 +115,7 @@ final class RealtimeSession {
             switch result {
             case .success(let msg):
                 switch msg {
-                case .string(let s):       self.handle(s)
+                case .string(let s):  self.handle(s)
                 case .data(let d):
                     if let s = String(data: d, encoding: .utf8) { self.handle(s) }
                 @unknown default: break
@@ -140,7 +149,6 @@ final class RealtimeSession {
             configureSession()
 
         case "input_audio_buffer.speech_started":
-            // Student started talking — cut the tutor off immediately
             player.stop(); player.play()
             Task { @MainActor in self.isTutorSpeaking = false; self.isStudentSpeaking = true }
 
@@ -272,30 +280,56 @@ final class RealtimeSession {
 
     // MARK: - Audio I/O
 
-    private func setupAudio() {
-        do {
-            try AVAudioSession.sharedInstance().setCategory(
-                .playAndRecord, mode: .voiceChat,
-                options: [.defaultToSpeaker, .allowBluetooth])
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch { print("AVAudioSession: \(error)") }
+    private func setupAudio() throws {
+        try AVAudioSession.sharedInstance().setCategory(
+            .playAndRecord, mode: .voiceChat,
+            options: [.defaultToSpeaker, .allowBluetooth])
+        try AVAudioSession.sharedInstance().setActive(true)
 
-        // Playback node — Float32 non-interleaved at 24 kHz
+        // Build playback graph once — survives stop/start cycles
         let playFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playFmt)
+        if !isEngineGraphBuilt {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: playFmt)
+            isEngineGraphBuilt = true
+        }
 
-        // Mic tap — request Float32 24 kHz; AVAudioEngine handles hardware resampling
-        let recFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        // Hardware input format (typically 48 kHz Float32, possibly stereo).
+        // Install tap at hardware's native format to avoid "format mismatch" crash,
+        // then resample to 24 kHz mono Float32 via AVAudioConverter.
+        let hwFmt   = engine.inputNode.outputFormat(forBus: 0)
+        let monoFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+
+        guard let conv = AVAudioConverter(from: hwFmt, to: monoFmt) else {
+            throw NSError(domain: "RealtimeSession", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Cannot create audio converter " +
+                    "(\(Int(hwFmt.sampleRate)) Hz → \(Int(sampleRate)) Hz)"
+            ])
+        }
+        converter = conv
+
         engine.inputNode.removeTap(onBus: 0)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4_800, format: recFmt) { [weak self] buf, _ in
-            guard let self, !self.isMuted,
-                  let ch = buf.floatChannelData?[0] else { return }
-            let n = Int(buf.frameLength)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4_096, format: hwFmt) { [weak self] buf, _ in
+            guard let self, !self.isMuted, let conv = self.converter else { return }
+
+            let ratio  = self.sampleRate / hwFmt.sampleRate
+            let outLen = AVAudioFrameCount(Double(buf.frameLength) * ratio + 1)
+            guard let outBuf = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: outLen) else { return }
+
+            var convErr: NSError?
+            conv.convert(to: outBuf, error: &convErr) { _, outStatus in
+                outStatus.pointee = .haveData
+                return buf
+            }
+            guard convErr == nil, outBuf.frameLength > 0,
+                  let ch = outBuf.floatChannelData?[0] else { return }
+
+            // Float32 → Int16 PCM16 with clamping
+            let n = Int(outBuf.frameLength)
             var i16 = [Int16](repeating: 0, count: n)
             for i in 0..<n {
-                let clamped = max(-1.0, min(1.0, ch[i]))
-                i16[i] = Int16(clamped * 32_767)
+                let s = max(-32_767.0, min(32_767.0, ch[i] * 32_767.0))
+                i16[i] = Int16(s)
             }
             let bytes = i16.withUnsafeBytes { Data($0) }
             self.send(["type": "input_audio_buffer.append",
@@ -303,7 +337,7 @@ final class RealtimeSession {
         }
 
         engine.prepare()
-        try? engine.start()
+        try engine.start()
         player.play()
     }
 

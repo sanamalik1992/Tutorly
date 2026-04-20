@@ -39,7 +39,7 @@ final class TutorSession {
                 self.drawTick &+= 1
             }
         }
-        realtimeSession.connect()
+        // connect() is NOT called here — user taps "Connect Voice" on the main screen
     }
 
     // MARK: - Preset sessions

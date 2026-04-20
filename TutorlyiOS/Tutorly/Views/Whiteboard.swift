@@ -9,6 +9,17 @@ struct DrawItem: Identifiable {
     static let animDuration: TimeInterval = 0.38
 }
 
+// Shared drawing state — created in ContentView, injected via environment.
+@Observable
+final class WhiteboardViewModel {
+    var canvas       = PKCanvasView()
+    var tool: PKTool = PKInkingTool(.pen, color: .init(Theme.ink), width: 3)
+    var selectedColor: Color = Theme.ink
+    var isEraser     = false
+    var brushSize: CGFloat = 3
+    var drawItems: [DrawItem] = []
+}
+
 // MARK: - PencilKit wrapper
 
 struct PencilCanvas: UIViewRepresentable {
@@ -167,52 +178,22 @@ struct AIDrawingOverlay: View {
     }
 }
 
-// MARK: - Whiteboard container
+// MARK: - Whiteboard toolbar (separate card, above the board)
 
-struct Whiteboard: View {
+struct WhiteboardToolbar: View {
     @Environment(TutorSession.self) private var session
-    @State private var canvas = PKCanvasView()
-    @State private var tool: PKTool = PKInkingTool(.pen, color: .init(Theme.ink), width: 3)
-    @State private var drawItems: [DrawItem] = []
-    @State private var selectedColor: Color = Theme.ink
-    @State private var isEraser = false
-    @State private var brushSize: CGFloat = 3
+    @Environment(WhiteboardViewModel.self) private var vm
 
     var body: some View {
-        VStack(spacing: 10) {
-            toolbar
-            boardArea
-        }
-        .onChange(of: session.drawTick) { _, _ in
-            guard let block = session.pendingDrawBlock else { return }
-            if block.clear == true {
-                canvas.drawing = PKDrawing()
-                drawItems = []
-            }
-            let now = Date()
-            let newItems = block.commands.enumerated().map { i, cmd in
-                DrawItem(command: cmd,
-                         revealAt: now.addingTimeInterval(Double(i) * DrawItem.animDuration))
-            }
-            drawItems.append(contentsOf: newItems)
-            session.pendingDrawBlock = nil
-        }
-        .onChange(of: session.clearBoardTrigger) { _, _ in
-            canvas.drawing = PKDrawing()
-            drawItems = []
-        }
-    }
-
-    private var toolbar: some View {
         HStack(spacing: 10) {
             HStack(spacing: 2) {
-                toolButton(systemImage: "pencil.tip", active: !isEraser) {
-                    isEraser = false
-                    tool = PKInkingTool(.pen, color: .init(selectedColor), width: brushSize)
+                toolButton(systemImage: "pencil.tip", active: !vm.isEraser) {
+                    vm.isEraser = false
+                    vm.tool = PKInkingTool(.pen, color: .init(vm.selectedColor), width: vm.brushSize)
                 }
-                toolButton(systemImage: "eraser", active: isEraser) {
-                    isEraser = true
-                    tool = PKEraserTool(.vector)
+                toolButton(systemImage: "eraser", active: vm.isEraser) {
+                    vm.isEraser = true
+                    vm.tool = PKEraserTool(.vector)
                 }
             }
             .padding(4)
@@ -222,9 +203,9 @@ struct Whiteboard: View {
             HStack(spacing: 6) {
                 ForEach(Theme.drawColors, id: \.name) { c in
                     Button {
-                        selectedColor = c.color
-                        isEraser = false
-                        tool = PKInkingTool(.pen, color: .init(c.color), width: brushSize)
+                        vm.selectedColor = c.color
+                        vm.isEraser = false
+                        vm.tool = PKInkingTool(.pen, color: .init(c.color), width: vm.brushSize)
                     } label: {
                         Circle()
                             .fill(c.color)
@@ -232,7 +213,8 @@ struct Whiteboard: View {
                             .overlay(
                                 Circle()
                                     .strokeBorder(
-                                        selectedColor == c.color && !isEraser ? Theme.ink : Color.clear,
+                                        vm.selectedColor == c.color && !vm.isEraser
+                                            ? Theme.ink : Color.clear,
                                         lineWidth: 2
                                     )
                                     .padding(-3)
@@ -253,6 +235,11 @@ struct Whiteboard: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
     }
 
     private func toolButton(systemImage: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -264,6 +251,35 @@ struct Whiteboard: View {
                 .background(active ? Theme.ink : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         }
+    }
+}
+
+// MARK: - Whiteboard board (board only, toolbar is a separate card above)
+
+struct Whiteboard: View {
+    @Environment(TutorSession.self) private var session
+    @Environment(WhiteboardViewModel.self) private var vm
+
+    var body: some View {
+        boardArea
+            .onChange(of: session.drawTick) { _, _ in
+                guard let block = session.pendingDrawBlock else { return }
+                if block.clear == true {
+                    vm.canvas.drawing = PKDrawing()
+                    vm.drawItems = []
+                }
+                let now = Date()
+                let newItems = block.commands.enumerated().map { i, cmd in
+                    DrawItem(command: cmd,
+                             revealAt: now.addingTimeInterval(Double(i) * DrawItem.animDuration))
+                }
+                vm.drawItems.append(contentsOf: newItems)
+                session.pendingDrawBlock = nil
+            }
+            .onChange(of: session.clearBoardTrigger) { _, _ in
+                vm.canvas.drawing = PKDrawing()
+                vm.drawItems = []
+            }
     }
 
     private var boardArea: some View {
@@ -297,12 +313,14 @@ struct Whiteboard: View {
                     ctx.stroke(margin, with: .color(Theme.teal.opacity(0.35)), lineWidth: 1)
                 }
 
-                PencilCanvas(canvas: $canvas, tool: $tool)
+                PencilCanvas(
+                    canvas: Binding(get: { vm.canvas }, set: { vm.canvas = $0 }),
+                    tool:   Binding(get: { vm.tool },   set: { vm.tool   = $0 })
+                )
 
-                AIDrawingOverlay(items: drawItems)
+                AIDrawingOverlay(items: vm.drawItems)
             }
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            // Soft inner shadow gives depth without a harsh border
             .shadow(color: Color.black.opacity(0.08), radius: 10, y: 4)
             .overlay(AlwaysOnBorder(isActive: session.realtimeSession.isTutorSpeaking || session.isThinking))
         }
@@ -310,16 +328,15 @@ struct Whiteboard: View {
 }
 
 // MARK: - Always-on animated gradient border
-// Slow rotation at low opacity when idle; faster + brighter when the tutor is active.
+// Rotates at a constant 30°/s; lineWidth and opacity pulse when the tutor is active.
 
 struct AlwaysOnBorder: View {
     let isActive: Bool
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1/30)) { ctx in
-            let t     = ctx.date.timeIntervalSinceReferenceDate
-            let speed = isActive ? 3.0 : 14.0
-            let angle = (t / speed).truncatingRemainder(dividingBy: 1.0) * 360
+            let angle = (ctx.date.timeIntervalSinceReferenceDate * 30)
+                .truncatingRemainder(dividingBy: 360)
 
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(
@@ -328,9 +345,9 @@ struct AlwaysOnBorder: View {
                         center: .center,
                         angle: .degrees(angle)
                     ),
-                    lineWidth: isActive ? 2.5 : 1.5
+                    lineWidth: isActive ? 3 : 1.5
                 )
-                .opacity(isActive ? 0.90 : 0.22)
+                .opacity(isActive ? 0.95 : 0.35)
         }
     }
 }
