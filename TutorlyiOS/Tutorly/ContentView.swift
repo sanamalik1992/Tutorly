@@ -1,25 +1,22 @@
 import SwiftUI
 import PencilKit
 
-// MARK: - Animated card border (shared by all cards except header)
+// MARK: - Shared
+
+private let kSubjectChips = ["Maths", "Physics", "Chemistry", "Biology", "History", "English", "Coding", "Economics"]
 
 struct AnimatedCardBorder: ViewModifier {
     let cornerRadius: CGFloat
-    let lineWidth: CGFloat
-    let opacity: Double
-
+    let lineWidth:    CGFloat
+    let opacity:      Double
     func body(content: Content) -> some View {
         content.overlay(
-            TimelineView(.animation) { timeline in
-                let angle = (timeline.date.timeIntervalSinceReferenceDate * 20)
-                    .truncatingRemainder(dividingBy: 360)
+            TimelineView(.animation) { tl in
+                let a = (tl.date.timeIntervalSinceReferenceDate * 20).truncatingRemainder(dividingBy: 360)
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(
-                        AngularGradient(
-                            colors: [Theme.navy, Theme.teal, Theme.amber, Theme.navy],
-                            center: .center,
-                            angle: .degrees(angle)
-                        ),
+                        AngularGradient(colors: [Theme.navy, Theme.teal, Theme.amber, Theme.navy],
+                                        center: .center, angle: .degrees(a)),
                         lineWidth: lineWidth
                     )
                     .opacity(opacity)
@@ -27,10 +24,17 @@ struct AnimatedCardBorder: ViewModifier {
         )
     }
 }
-
 extension View {
-    func animatedBorder(cornerRadius: CGFloat = 14, lineWidth: CGFloat = 1.0, opacity: Double = 0.25) -> some View {
+    func animatedBorder(cornerRadius: CGFloat = 20, lineWidth: CGFloat = 1, opacity: Double = 0.3) -> some View {
         modifier(AnimatedCardBorder(cornerRadius: cornerRadius, lineWidth: lineWidth, opacity: opacity))
+    }
+}
+
+struct SpringButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.93 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -45,278 +49,404 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            VStack(spacing: 12) {
-                HeaderCard(showSettings: $showSettings, showTranscript: $showTranscript)
-                ModeSubjectCard()
-                ToolbarCard()
-                WhiteboardCard()
-                VoiceBarCard()
+            VStack(spacing: 0) {
+                AppHeader(showSettings: $showSettings, showTranscript: $showTranscript)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
+
+                ControlsStrip()
+                    .padding(.bottom, 10)
+
+                // Whiteboard is the dominant element — toolbar floats over it
+                ZStack(alignment: .top) {
+                    Whiteboard()
+                        .padding(.horizontal, 16)
+
+                    FloatingToolbar()
+                        .padding(.horizontal, 24)
+                        .padding(.top, 10)
+                }
+                .frame(maxHeight: .infinity)
+
+                VoicePill()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 20)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
             .environment(wbvm)
         }
         .sheet(isPresented: $showSettings)   { SettingsSheet() }
         .sheet(isPresented: $showTranscript) { TranscriptSheet() }
         .alert("Error", isPresented: Binding(
             get: { session.errorMessage != nil || session.realtimeSession.errorMessage != nil },
-            set: { if !$0 {
-                session.errorMessage = nil
-                session.realtimeSession.errorMessage = nil
-            }}
+            set: { if !$0 { session.errorMessage = nil; session.realtimeSession.errorMessage = nil }}
         )) {
-            Button("OK") {
-                session.errorMessage = nil
-                session.realtimeSession.errorMessage = nil
-            }
+            Button("OK") { session.errorMessage = nil; session.realtimeSession.errorMessage = nil }
         } message: {
             Text(session.errorMessage ?? session.realtimeSession.errorMessage ?? "")
         }
     }
 }
 
-// MARK: - HeaderCard  (56 pt, brand mark + icons only)
+// MARK: - AppHeader
 
-struct HeaderCard: View {
+struct AppHeader: View {
     @Binding var showSettings:   Bool
     @Binding var showTranscript: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            // 36pt gradient T mark
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Theme.brandGradient)
-                    .frame(width: 36, height: 36)
-                    .shadow(color: Theme.navy.opacity(0.25), radius: 6, y: 2)
-                Text("T")
-                    .font(.system(size: 18, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
+        HStack(spacing: 10) {
+            // Brand pill
+            HStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Theme.brandGradient)
+                        .frame(width: 28, height: 28)
+                    Text("T")
+                        .font(.system(size: 14, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                }
+                HStack(spacing: 1) {
+                    Text("Tutor")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.ink)
+                    Text("ly")
+                        .font(.system(size: 20, weight: .regular, design: .rounded).italic())
+                        .foregroundStyle(Theme.navy)
+                    Text(".")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .foregroundStyle(Theme.amber)
+                }
             }
-            // Title — SF Pro Rounded Bold 22 pt
-            HStack(spacing: 1) {
-                Text("Tutor")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.ink)
-                Text("ly")
-                    .font(.system(size: 22, weight: .regular, design: .rounded))
-                    .italic()
-                    .foregroundStyle(Theme.navy)
-                Text(".")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.amber)
-            }
+
             Spacer()
-            // Transcript icon
-            Button { showTranscript = true } label: { headerIcon("text.alignleft") }
-            // Settings icon
-            Button { showSettings   = true } label: { headerIcon("gearshape") }
+
+            HStack(spacing: 8) {
+                headerBtn("text.alignleft") { showTranscript = true }
+                headerBtn("gearshape")      { showSettings   = true }
+            }
         }
-        .frame(height: 56)
     }
 
-    private func headerIcon(_ name: String) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 15, weight: .medium))
-            .foregroundStyle(Theme.inkSoft)
-            .frame(width: 34, height: 34)
-            .background(.ultraThinMaterial)
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+    private func headerBtn(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.inkFaint)
+                .frame(width: 36, height: 36)
+                .background(Theme.bgDeep)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
     }
 }
 
-// MARK: - ModeSubjectCard  (ultraThinMaterial, 14pt radius, 16pt padding)
+// MARK: - ControlsStrip  (mode pills + subject chips in one scrollable row)
 
-struct ModeSubjectCard: View {
+struct ControlsStrip: View {
+    @Environment(TutorSession.self) private var session
+    @State private var showCustomField = false
+    @State private var customText      = ""
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                // ── Mode pill toggle ─────────────────────────
+                ModePillToggle()
+                    .padding(.leading, 20)
+
+                Rectangle()
+                    .fill(Theme.line)
+                    .frame(width: 1, height: 22)
+                    .padding(.horizontal, 2)
+
+                // ── Subject chips ────────────────────────────
+                ForEach(kSubjectChips, id: \.self) { subject in
+                    SubjectChip(
+                        label: subject,
+                        active: session.subject == subject
+                    ) {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            session.subject = (session.subject == subject) ? "" : subject
+                            showCustomField = false
+                        }
+                    }
+                }
+
+                // Custom chip / field
+                if showCustomField {
+                    TextField("Topic…", text: $customText)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.ink)
+                        .padding(.horizontal, 14)
+                        .frame(width: 130, height: 34)
+                        .background(Theme.paper)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.navy.opacity(0.4), lineWidth: 1.5))
+                        .onSubmit {
+                            if !customText.isEmpty { session.subject = customText }
+                            showCustomField = false
+                        }
+                } else {
+                    Button {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            showCustomField = true
+                            session.subject = ""
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Other")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(Theme.inkSoft)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(Theme.bgDeep)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 1))
+                    }
+                    .padding(.trailing, 20)
+                }
+            }
+            .frame(height: 44)
+        }
+    }
+}
+
+struct ModePillToggle: View {
     @Environment(TutorSession.self) private var session
 
     var body: some View {
-        @Bindable var session = session
-        return VStack(spacing: 0) {
-            // Row 1: Teach me | Quiz me, full-width, 44pt
-            HStack(spacing: 0) {
-                modeTab(.teach)
-                modeTab(.quiz)
-            }
-            .frame(height: 44)
-            Divider()
-            // Row 2: subject field, full-width, 44pt
-            HStack(spacing: 8) {
-                Image(systemName: "book.closed")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.inkFaint)
-                TextField("What are we learning today?", text: $session.subject)
-                    .font(.system(size: 14, design: .rounded))
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 44)
+        HStack(spacing: 2) {
+            modePill(.teach)
+            modePill(.quiz)
         }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .animatedBorder(cornerRadius: 14)
+        .padding(3)
+        .background(Theme.bgDeep)
+        .clipShape(Capsule())
     }
 
-    private func modeTab(_ m: TutorMode) -> some View {
+    private func modePill(_ m: TutorMode) -> some View {
         let active = session.mode == m
         return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { session.mode = m }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { session.mode = m }
         } label: {
             Text(m.label)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundStyle(active ? Theme.paper : Theme.ink)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(active ? Theme.ink : Color.clear)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(active ? .white : Theme.inkSoft)
+                .padding(.horizontal, 16)
+                .frame(height: 28)
+                .background(active ? Theme.navy : Color.clear)
+                .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: active)
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: active)
     }
 }
 
-// MARK: - ToolbarCard  (44pt, ultraThinMaterial, 12pt radius)
+struct SubjectChip: View {
+    let label:  String
+    let active: Bool
+    let action: () -> Void
 
-struct ToolbarCard: View {
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(active ? .white : Theme.inkSoft)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(active ? Theme.tealDeep : Theme.bgDeep)
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(active ? Color.clear : Theme.line, lineWidth: 1))
+                .shadow(color: active ? Theme.teal.opacity(0.3) : .clear, radius: 6, y: 2)
+        }
+        .buttonStyle(SpringButtonStyle())
+    }
+}
+
+// MARK: - FloatingToolbar  (glassmorphism pill, overlays the canvas)
+
+struct FloatingToolbar: View {
     @Environment(TutorSession.self) private var session
     @Environment(WhiteboardViewModel.self) private var vm
 
     var body: some View {
-        HStack(spacing: 10) {
-            // Pen
-            toolBtn("pencil.tip", active: !vm.isEraser) {
-                vm.isEraser = false
-                vm.tool = PKInkingTool(.pen, color: .init(vm.selectedColor), width: vm.brushSize)
+        HStack(spacing: 8) {
+            // Pen / Eraser
+            HStack(spacing: 2) {
+                toolBtn("pencil.tip", active: !vm.isEraser) {
+                    vm.isEraser = false
+                    vm.tool = PKInkingTool(.pen, color: .init(vm.selectedColor), width: vm.brushSize)
+                }
+                toolBtn("eraser", active: vm.isEraser) {
+                    vm.isEraser = true
+                    vm.tool = PKEraserTool(.vector)
+                }
             }
-            // Eraser
-            toolBtn("eraser", active: vm.isEraser) {
-                vm.isEraser = true
-                vm.tool = PKEraserTool(.vector)
-            }
-            // Divider
-            Rectangle().fill(Theme.line).frame(width: 1, height: 22).padding(.horizontal, 2)
-            // 5 color swatches
-            HStack(spacing: 6) {
+            .padding(3)
+            .background(.ultraThickMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+
+            // Color swatches
+            HStack(spacing: 5) {
                 ForEach(Theme.drawColors, id: \.name) { c in
                     Button {
                         vm.selectedColor = c.color
                         vm.isEraser = false
                         vm.tool = PKInkingTool(.pen, color: .init(c.color), width: vm.brushSize)
                     } label: {
-                        Circle().fill(c.color).frame(width: 22, height: 22)
-                            .overlay(
-                                Circle()
-                                    .strokeBorder(
-                                        vm.selectedColor == c.color && !vm.isEraser
-                                            ? Theme.ink : Color.clear,
-                                        lineWidth: 2)
-                                    .padding(-3)
-                            )
+                        Circle().fill(c.color).frame(width: 20, height: 20)
+                            .shadow(color: c.color.opacity(vm.selectedColor == c.color && !vm.isEraser ? 0.5 : 0),
+                                    radius: 4)
+                            .scaleEffect(vm.selectedColor == c.color && !vm.isEraser ? 1.2 : 1)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.7),
+                                       value: vm.selectedColor == c.color)
                     }
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.ultraThickMaterial)
+            .clipShape(Capsule())
+
             Spacer()
+
             // Clear
             Button { session.clearBoard() } label: {
                 Text("CLEAR")
-                    .font(.mono(10, weight: .semibold)).kerning(1.2)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .kerning(1)
                     .foregroundStyle(Theme.inkSoft)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.line))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThickMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .animatedBorder(cornerRadius: 12)
+        .shadow(color: Color.black.opacity(0.08), radius: 12, y: 3)
     }
 
-    private func toolBtn(_ image: String, active: Bool, action: @escaping () -> Void) -> some View {
+    private func toolBtn(_ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: image)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(active ? Theme.paper : Theme.ink)
-                .frame(width: 34, height: 34)
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(active ? Theme.paper : Theme.inkFaint)
+                .frame(width: 32, height: 32)
                 .background(active ? Theme.ink : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
         }
     }
 }
 
-// MARK: - WhiteboardCard  (flex height, wraps Whiteboard + animated gradient border)
+// MARK: - VoicePill  (Duolingo-style dominant bottom element)
 
-struct WhiteboardCard: View {
-    @Environment(TutorSession.self) private var session
-
-    var body: some View {
-        Whiteboard()
-            .frame(maxHeight: .infinity)
-    }
-}
-
-// MARK: - VoiceBarCard  (80pt, ultraThinMaterial, 14pt radius)
-
-struct VoiceBarCard: View {
+struct VoicePill: View {
     @Environment(TutorSession.self) private var session
 
     var body: some View {
         let rs = session.realtimeSession
-        HStack(spacing: 16) {
-            ConnectMicButton(realtimeSession: rs)
-            Text(statusLabel(rs: rs))
-                .font(.system(size: 14, weight: .regular, design: .rounded).italic())
-                .foregroundStyle(Theme.inkSoft)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 0) {
+            // Big mic button
+            VoiceMicButton(rs: rs)
+                .padding(.leading, 12)
+
+            // Status
+            VStack(alignment: .leading, spacing: 2) {
+                Text(statusTitle(rs: rs))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                Text(statusSub(rs: rs))
+                    .font(.system(size: 12, weight: .regular, design: .rounded))
+                    .foregroundStyle(Theme.inkFaint)
+                    .lineLimit(1)
+            }
+            .padding(.leading, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Waveform animation when speaking
+            if rs.isConnected {
+                WaveformBars(active: rs.isTutorSpeaking || rs.isStudentSpeaking)
+                    .frame(width: 32)
+                    .padding(.trailing, 16)
+            }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 80)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .animatedBorder(cornerRadius: 14)
+        .frame(height: 88)
+        .background(pillBackground(rs: rs))
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(color: pillShadow(rs: rs), radius: 14, y: 4)
+        .animatedBorder(cornerRadius: 24, lineWidth: 1.2, opacity: rs.isConnected ? 0.4 : 0.2)
     }
 
-    private func statusLabel(rs: RealtimeSession) -> String {
-        if !rs.isConnected      { return "Tap Connect to start" }
-        if rs.isMuted           { return "Muted" }
+    private func pillBackground(_ rs: RealtimeSession) -> some ShapeStyle {
+        if rs.isStudentSpeaking {
+            return AnyShapeStyle(LinearGradient(
+                colors: [Theme.amber.opacity(0.12), Theme.paper],
+                startPoint: .leading, endPoint: .trailing))
+        }
+        if rs.isTutorSpeaking {
+            return AnyShapeStyle(LinearGradient(
+                colors: [Theme.teal.opacity(0.10), Theme.paper],
+                startPoint: .leading, endPoint: .trailing))
+        }
+        return AnyShapeStyle(Theme.paper)
+    }
+
+    private func pillShadow(_ rs: RealtimeSession) -> Color {
+        if rs.isStudentSpeaking { return Theme.amber.opacity(0.2) }
+        if rs.isTutorSpeaking   { return Theme.teal.opacity(0.2) }
+        return Color.black.opacity(0.07)
+    }
+
+    private func statusTitle(_ rs: RealtimeSession) -> String {
+        if !rs.isConnected      { return "Connect to start" }
+        if rs.isMuted           { return "Microphone muted" }
         if rs.isStudentSpeaking { return "Listening…" }
-        if session.isThinking   { return "Tutorly is thinking" }
-        if rs.isTutorSpeaking   { return "Tutorly is speaking" }
-        return "Always listening…"
+        if session.isThinking   { return "Thinking…" }
+        if rs.isTutorSpeaking   { return "Speaking…" }
+        return "Ready"
+    }
+
+    private func statusSub(_ rs: RealtimeSession) -> String {
+        if !rs.isConnected      { return "Tap the mic to connect voice" }
+        if rs.isMuted           { return "Tap to unmute" }
+        if rs.isStudentSpeaking { return "Go ahead, I'm listening" }
+        if rs.isTutorSpeaking   { return "Tap mic to interrupt" }
+        return "Ask me anything"
     }
 }
 
-// MARK: - ConnectMicButton  (64pt circle, 4 states, 4s pulse when idle-connected)
+// MARK: - VoiceMicButton
 
-struct ConnectMicButton: View {
-    let realtimeSession: RealtimeSession
+struct VoiceMicButton: View {
+    let rs: RealtimeSession
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1/30, paused:
-            !realtimeSession.isConnected ||
-            realtimeSession.isMuted ||
-            realtimeSession.isStudentSpeaking ||
-            realtimeSession.isTutorSpeaking
+            !rs.isConnected || rs.isMuted || rs.isStudentSpeaking || rs.isTutorSpeaking
         )) { ctx in
             let t     = ctx.date.timeIntervalSinceReferenceDate
-            let pulse = CGFloat((sin(t * .pi / 2.0) + 1) / 2)   // 0 → 1 → 0 over 4 s
+            let pulse = CGFloat((sin(t * .pi / 2.0) + 1) / 2)
 
             Button {
-                if realtimeSession.isConnected { realtimeSession.toggleMute() }
-                else { realtimeSession.connect() }
+                if rs.isConnected { rs.toggleMute() } else { rs.connect() }
             } label: {
                 ZStack {
-                    if realtimeSession.isConnected && !realtimeSession.isMuted {
+                    // Outer glow ring
+                    if rs.isConnected && !rs.isMuted {
                         Circle()
-                            .fill(glowColor.opacity(0.15 * pulse))
-                            .frame(width: 86, height: 86)
+                            .fill(glowColor.opacity(0.12 * pulse))
+                            .frame(width: 84, height: 84)
                     }
                     Circle()
-                        .fill(buttonGradient)
+                        .fill(btnGradient)
                         .frame(width: 64, height: 64)
-                        .shadow(color: glowColor.opacity(0.20 + 0.20 * pulse),
-                                radius: 8 + 8 * pulse, y: 3)
-                    Image(systemName: buttonIcon)
+                        .shadow(color: glowColor.opacity(0.22 + 0.18 * pulse),
+                                radius: 10 + 8 * pulse, y: 4)
+                    Image(systemName: btnIcon)
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundStyle(.white)
                 }
@@ -325,41 +455,52 @@ struct ConnectMicButton: View {
         }
     }
 
-    private var buttonIcon: String {
-        if !realtimeSession.isConnected { return "waveform" }
-        return realtimeSession.isMuted ? "mic.slash.fill" : "mic.fill"
+    private var btnIcon: String {
+        guard rs.isConnected else { return "waveform" }
+        return rs.isMuted ? "mic.slash.fill" : "mic.fill"
     }
 
-    private var buttonGradient: LinearGradient {
-        if realtimeSession.isMuted {
-            return LinearGradient(colors: [Color(white: 0.55), Color(white: 0.45)],
-                                  startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-        if realtimeSession.isConnected {
-            if realtimeSession.isStudentSpeaking {
-                return LinearGradient(colors: [Theme.amber, Theme.amberDeep],
-                                      startPoint: .topLeading, endPoint: .bottomTrailing)
-            }
-            return LinearGradient(colors: [Theme.teal, Theme.tealDeep],
-                                  startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-        // Not connected — navy → teal
+    private var btnGradient: LinearGradient {
+        if rs.isMuted { return LinearGradient(colors: [.gray.opacity(0.7), .gray.opacity(0.5)],
+                                              startPoint: .topLeading, endPoint: .bottomTrailing) }
+        if rs.isStudentSpeaking { return LinearGradient(colors: [Theme.amber, Theme.amberDeep],
+                                                         startPoint: .topLeading, endPoint: .bottomTrailing) }
+        if rs.isConnected { return LinearGradient(colors: [Theme.teal, Theme.tealDeep],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing) }
         return LinearGradient(colors: [Theme.navy, Theme.teal],
                               startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     private var glowColor: Color {
-        realtimeSession.isConnected ? Theme.teal : Theme.navy
+        if rs.isStudentSpeaking { return Theme.amber }
+        return rs.isConnected ? Theme.teal : Theme.navy
     }
 }
 
-// MARK: - SpringButtonStyle
+// MARK: - WaveformBars  (3 bars that animate when active)
 
-struct SpringButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
-            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: configuration.isPressed)
+struct WaveformBars: View {
+    let active: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1/30, paused: !active)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 3) {
+                bar(phase: 0,    t: t)
+                bar(phase: 0.4,  t: t)
+                bar(phase: 0.8,  t: t)
+            }
+        }
+    }
+
+    private func bar(phase: Double, t: Double) -> some View {
+        let h: CGFloat = active
+            ? CGFloat(0.4 + 0.5 * (sin(t * 6 + phase) * 0.5 + 0.5)) * 22
+            : 6
+        return RoundedRectangle(cornerRadius: 2)
+            .fill(active ? Theme.teal : Theme.line)
+            .frame(width: 3, height: h)
+            .animation(.easeInOut(duration: 0.15), value: h)
     }
 }
 
@@ -372,7 +513,7 @@ struct TranscriptSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     if session.messages.isEmpty {
                         Text("Nothing yet — start a conversation.")
                             .font(.system(size: 14, design: .rounded)).italic()
@@ -380,10 +521,10 @@ struct TranscriptSheet: View {
                             .frame(maxWidth: .infinity).padding(.top, 60)
                     }
                     ForEach(session.messages) { m in
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text(m.role == .user ? "YOU" : "TUTORLY")
-                                .font(.mono(9, weight: .bold)).kerning(1.2)
-                                .foregroundStyle(Theme.inkFaint)
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .kerning(1.2).foregroundStyle(Theme.inkFaint)
                             Text(m.content)
                                 .font(.system(size: 15, design: .rounded))
                                 .foregroundStyle(Theme.inkSoft)
@@ -395,7 +536,7 @@ struct TranscriptSheet: View {
                         .overlay(Rectangle()
                             .fill(m.role == .assistant ? Theme.navy : Theme.teal)
                             .frame(width: 2), alignment: .leading)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
                 .padding()
@@ -431,46 +572,32 @@ struct SettingsSheet: View {
             Form {
                 Section {
                     SecureField("sk-…", text: $openAIKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.system(size: 14, design: .monospaced))
                 } header: { Text("OpenAI API Key") } footer: {
-                    Text("Real-time voice mode. Get a key at platform.openai.com. Stored in your iOS Keychain.")
+                    Text("Real-time voice mode. Stored in your iOS Keychain.")
                 }
-
                 Section {
                     SecureField("sk-ant-…", text: $anthropicKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.system(size: 14, design: .monospaced))
-                } header: { Text("Anthropic API Key (text fallback)") } footer: {
-                    Text("Used when Realtime voice is not connected.")
-                }
-
+                } header: { Text("Anthropic API Key (text fallback)") }
                 Section {
                     Picker("Fallback voice", selection: Binding(
-                        get: { session.synth.gender },
-                        set: { session.synth.gender = $0 }
+                        get: { session.synth.gender }, set: { session.synth.gender = $0 }
                     )) {
                         Text("Female").tag(VoiceGender.female)
                         Text("Male").tag(VoiceGender.male)
                     }
                     .pickerStyle(.segmented)
-                } header: { Text("Fallback Voice") } footer: {
-                    Text("Voice used when falling back to the Anthropic text pipeline.")
-                }
-
+                } header: { Text("Fallback Voice") }
                 Section {
                     Button {
-                        Keychain.saveOpenAI(openAIKey)
-                        Keychain.save(anthropicKey)
+                        Keychain.saveOpenAI(openAIKey); Keychain.save(anthropicKey)
                         saved = true
                         session.realtimeSession.disconnect()
                         if !openAIKey.isEmpty { session.realtimeSession.connect() }
-                        Task {
-                            try? await Task.sleep(nanoseconds: 1_200_000_000)
-                            dismiss()
-                        }
+                        Task { try? await Task.sleep(nanoseconds: 1_200_000_000); dismiss() }
                     } label: {
                         HStack {
                             Spacer()
@@ -481,19 +608,10 @@ struct SettingsSheet: View {
                     }
                     .disabled(openAIKey.isEmpty && anthropicKey.isEmpty)
                 }
-
-                Section {
-                    Link("OpenAI platform",   destination: URL(string: "https://platform.openai.com")!)
-                    Link("Anthropic console", destination: URL(string: "https://console.anthropic.com")!)
-                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
         }
     }
 }
