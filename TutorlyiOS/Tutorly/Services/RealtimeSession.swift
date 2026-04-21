@@ -41,7 +41,7 @@ final class RealtimeSession {
     @ObservationIgnored private var safetyTimeoutItem:      DispatchWorkItem?
     @ObservationIgnored private var bargeInAudioRMS:        Float = 0.0
     @ObservationIgnored private var audioScheduledThisResponse = false
-    private let postPlaybackCooldown: TimeInterval = 0.15
+    private let postPlaybackCooldown: TimeInterval = 0.35
 
     @ObservationIgnored var currentMode: TutorMode = .teach
 
@@ -149,6 +149,21 @@ final class RealtimeSession {
 
         case "input_audio_buffer.speech_stopped":
             Task { @MainActor in self.isStudentSpeaking = false }
+
+        // Whisper transcript is ready — only respond if the user actually said something.
+        // This is the gate that prevents the AI from answering its own echo / ambient noise.
+        case "conversation.item.input_audio_transcription.completed":
+            let transcript = (json["transcript"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            print("[ASR] '\(transcript)'")
+            guard !transcript.isEmpty else {
+                print("[ASR] empty transcript — skipping response")
+                break
+            }
+            send(["type": "response.create"])
+
+        case "conversation.item.input_audio_transcription.failed":
+            print("[ASR] transcription failed — skipping response")
 
         case "response.created":
             isAssistantResponding = true
@@ -324,10 +339,10 @@ final class RealtimeSession {
                 "input_audio_transcription": ["model": "whisper-1"],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": 0.5,
+                    "threshold": 0.55,        // less sensitive — avoids echo false-positives
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 600,
-                    "create_response": true,
+                    "silence_duration_ms": 800, // enough time to pause and think
+                    "create_response": false,   // WE create responses, only after Whisper confirms non-empty speech
                     "interrupt_response": true
                 ] as [String: Any],
                 "tools": [drawToolSchema()],
