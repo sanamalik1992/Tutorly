@@ -44,6 +44,10 @@ final class RealtimeSession {
     @ObservationIgnored private var bargeInAudioRMS:        Float = 0.0
     @ObservationIgnored private var audioScheduledThisResponse = false
     @ObservationIgnored private var responseGeneration: Int = 0
+    // Set when handleDraw sends response.create so response.done skips openMic() —
+    // prevents the mic opening in the gap between the draw-only response and the
+    // follow-up speaking response.
+    @ObservationIgnored private var hasPendingDrawResponse = false
     private let postPlaybackCooldown: TimeInterval = 0.35
 
     @ObservationIgnored var currentMode: TutorMode = .teach
@@ -181,6 +185,7 @@ final class RealtimeSession {
         case "response.created":
             isAssistantResponding = true
             audioScheduledThisResponse = false
+            hasPendingDrawResponse = false
             responseGeneration += 1
             send(["type": "input_audio_buffer.clear"])
             scheduleSafetyTimeout()
@@ -218,7 +223,9 @@ final class RealtimeSession {
         case "response.done":
             cancelSafetyTimeout()
             pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
-            if !audioScheduledThisResponse { openMic() }
+            // Don't open mic if a draw response.create is pending — the speaking
+            // response is about to start and will set isAssistantResponding again.
+            if !audioScheduledThisResponse && !hasPendingDrawResponse { openMic() }
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "response.cancelled":
@@ -339,6 +346,9 @@ final class RealtimeSession {
         send(["type": "conversation.item.create",
               "item": ["type": "function_call_output", "call_id": callId,
                        "output": "{\"ok\":true}"] as [String: Any]])
+        // Flag before sending so response.done (which fires around the same time)
+        // knows not to call openMic() — the speaking response is about to start.
+        hasPendingDrawResponse = true
         send(["type": "response.create"])
     }
 
@@ -372,26 +382,31 @@ final class RealtimeSession {
 
     private func buildInstructions(mode: TutorMode) -> String {
         let base = """
-        You are a live visual tutor — like a great teacher with a whiteboard. Your style: \
-        warm, casual, energetic. Use phrases like 'right so', 'okay', 'gotcha', 'nice'. \
+        LANGUAGE: English only. Always respond in English regardless of the user's \
+        device locale, accent, or any language they speak.
+
+        You are a live visual tutor — warm, casual, energetic, like a brilliant teacher \
+        with a whiteboard. Use phrases like 'right so', 'okay', 'gotcha', 'nice one'. \
         Ask 'make sense?' after each idea.
 
-        RESPONSE LENGTH — CRITICAL: Speak in SHORT bursts only. Maximum 1-2 sentences \
-        per turn. Stop and let the student respond. Do NOT lecture. Do NOT keep talking \
-        after making a point. Say one thing, then wait.
+        BREVITY — CRITICAL: Maximum 1-2 sentences per turn. Say one thing, then stop \
+        and wait for the student. Never lecture. Never keep talking after making a point.
 
-        WHITEBOARD — MANDATORY: You MUST call draw_on_whiteboard for every explanation. \
-        Call it BEFORE you speak the explanation so drawing appears as you talk. \
-        For equations: draw the equation as text. For processes: draw steps with arrows. \
-        For concepts: write the key word with a circle or underline. \
-        Even for a simple definition, write the key term on the board. \
-        Never skip the whiteboard. The student learns visually.
+        WHITEBOARD — CALL draw_on_whiteboard ON EVERY SINGLE RESPONSE, NO EXCEPTIONS: \
+        • Always call it BEFORE speaking so the drawing appears as you talk \
+        • New topic → clear:true, write the topic title large at the top \
+        • Equation → write it as a text command \
+        • Concept → write the key word, draw a circle around it \
+        • Process → number the steps, connect with arrows \
+        • Even for a one-word answer, write that word on the board \
+        If you are about to speak without having called draw_on_whiteboard first — stop, \
+        call draw_on_whiteboard, then speak.
         """
         switch mode {
         case .teach:
-            return base + "\n\nMode: TEACH. Call draw_on_whiteboard first, then explain in 1-2 sentences, then pause."
+            return base + "\n\nMode: TEACH. draw_on_whiteboard → explain in 1-2 sentences → ask 'make sense?' → wait."
         case .quiz:
-            return base + "\n\nMode: QUIZ. Ask one short question. After their answer, draw the correct solution on the board."
+            return base + "\n\nMode: QUIZ. draw_on_whiteboard the question concept → ask one short question → wait for answer → draw correct solution."
         }
     }
 
