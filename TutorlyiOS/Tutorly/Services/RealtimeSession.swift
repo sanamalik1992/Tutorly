@@ -96,7 +96,8 @@ final class RealtimeSession {
         send(["type": "conversation.item.create",
               "item": ["type": "message", "role": "user",
                        "content": [["type": "input_text", "text": text]]] as [String: Any]])
-        sendResponseCreate(toolChoice: "required")
+        requireDraw()
+        send(["type": "response.create"])
     }
 
     func updateMode(_ mode: TutorMode) {
@@ -137,16 +138,15 @@ final class RealtimeSession {
         socket?.send(.string(text)) { _ in }
     }
 
-    // Sends response.create with an optional per-response tool_choice override.
-    // "required" → model MUST call draw_on_whiteboard.
-    // "none"     → model speaks only, no tool call (used for the post-draw speaking turn).
-    private func sendResponseCreate(toolChoice: String) {
-        if toolChoice == "auto" {
-            send(["type": "response.create"])
-        } else {
-            send(["type": "response.create",
-                  "response": ["tool_choice": toolChoice] as [String: Any]])
-        }
+    // session.update is processed in-order before response.create, so these two helpers
+    // reliably change tool_choice before the model starts generating.
+    private func requireDraw() {
+        send(["type": "session.update",
+              "session": ["tool_choice": "required"] as [String: Any]])
+    }
+    private func allowSpeak() {
+        send(["type": "session.update",
+              "session": ["tool_choice": "auto"] as [String: Any]])
     }
 
     // MARK: - Event handling
@@ -189,7 +189,8 @@ final class RealtimeSession {
                 print("[ASR] filler-only '\(transcript)' — skipping"); break
             }
             // Force model to draw before speaking on every user turn.
-            sendResponseCreate(toolChoice: "required")
+            requireDraw()
+            send(["type": "response.create"])
 
         case "conversation.item.input_audio_transcription.failed":
             print("[ASR] transcription failed — skipping")
@@ -347,8 +348,9 @@ final class RealtimeSession {
               "item": ["type": "function_call_output", "call_id": callId,
                        "output": "{\"ok\":true}"] as [String: Any]])
         hasPendingDrawResponse = true
-        // Speaking turn: no tool call needed, just voice.
-        sendResponseCreate(toolChoice: "none")
+        // Restore auto so the speaking turn can produce audio without needing another draw.
+        allowSpeak()
+        send(["type": "response.create"])
     }
 
     // MARK: - Session configuration
@@ -381,30 +383,28 @@ final class RealtimeSession {
 
     private func buildInstructions(mode: TutorMode) -> String {
         let base = """
-        LANGUAGE: English only. Always respond in English regardless of the user's \
-        device locale, accent, or any language they speak.
+        ENGLISH ONLY. You must always speak English. Do not use Spanish or any other \
+        language under any circumstances, regardless of the user's device locale or accent.
 
         You are a live visual tutor — warm, casual, energetic, like a brilliant teacher \
         with a whiteboard. Use phrases like 'right so', 'okay', 'gotcha', 'nice one'. \
         Ask 'make sense?' after each idea.
 
-        BREVITY — CRITICAL: Maximum 1-2 sentences per turn. Say one thing, then stop \
-        and wait for the student. Never lecture. Never keep talking after making a point.
+        BREVITY: Maximum 1-2 sentences per turn. Say one thing, then stop and wait. \
+        Never lecture. Never keep talking after making a point.
 
-        WHITEBOARD — YOU WILL BE FORCED TO CALL draw_on_whiteboard ON EVERY RESPONSE. \
-        This is enforced by the API. When you receive a user message, your first action \
-        MUST be to call draw_on_whiteboard before any speech output: \
-        • New topic → clear:true + write the topic title large \
-        • Equation → write it as text \
-        • Concept → write the key word, circle it \
-        • Process → numbered steps with arrows \
-        • Even for a simple yes/no — write the key word on the board.
+        WHITEBOARD: The API forces you to call draw_on_whiteboard before every response. \
+        Use it well — write the key term, equation, or step that matches what you are \
+        about to say. Clear the board for a new topic (clear:true). \
+        Draw first, then speak.
+
+        REMEMBER: ENGLISH ONLY. Every single word you say must be English.
         """
         switch mode {
         case .teach:
-            return base + "\n\nMode: TEACH. draw_on_whiteboard → explain in 1-2 sentences → ask 'make sense?' → wait."
+            return base + "\n\nMode: TEACH. Draw the concept → explain in 1-2 sentences → ask 'make sense?' → wait."
         case .quiz:
-            return base + "\n\nMode: QUIZ. draw_on_whiteboard the concept → ask one short question → wait → draw correct solution."
+            return base + "\n\nMode: QUIZ. Draw the concept → ask one short question → wait → draw correct solution."
         }
     }
 
