@@ -6,6 +6,8 @@ import AVFoundation
 // the last audio sample plays out (marker buffer completion), not on response.done.
 // Barge-in: RMS gate in mic tap, timer created on MAIN RunLoop (audio thread
 // RunLoop does not process timers — previous bug that silenced all interruption).
+// Generation counter: when AI draws+speaks (2 responses), Response 1's marker must
+// not open the mic during Response 2. responseGeneration invalidates stale markers.
 
 private let bargeInRMSThreshold: Float = 0.018
 
@@ -41,6 +43,7 @@ final class RealtimeSession {
     @ObservationIgnored private var safetyTimeoutItem:      DispatchWorkItem?
     @ObservationIgnored private var bargeInAudioRMS:        Float = 0.0
     @ObservationIgnored private var audioScheduledThisResponse = false
+    @ObservationIgnored private var responseGeneration: Int = 0
     private let postPlaybackCooldown: TimeInterval = 0.35
 
     @ObservationIgnored var currentMode: TutorMode = .teach
@@ -151,13 +154,23 @@ final class RealtimeSession {
             Task { @MainActor in self.isStudentSpeaking = false }
 
         // Whisper transcript is ready — only respond if the user actually said something.
-        // This is the gate that prevents the AI from answering its own echo / ambient noise.
+        // Gate 1: empty transcript (silence / ambient noise).
+        // Gate 2: filler-only transcript — Whisper hallucinates "um", "hmm" etc. during
+        //         pauses; the AI must not evaluate these as a real answer in quiz mode.
         case "conversation.item.input_audio_transcription.completed":
             let transcript = (json["transcript"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             print("[ASR] '\(transcript)'")
             guard !transcript.isEmpty else {
-                print("[ASR] empty transcript — skipping response")
+                print("[ASR] empty transcript — skipping")
+                break
+            }
+            let fillers: Set<String> = ["um","uh","mm","hmm","hm","ah","oh","er","erm","mhm","ugh","huh"]
+            let words = transcript.lowercased()
+                .components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            let meaningful = words.filter { !fillers.contains($0) }
+            guard !meaningful.isEmpty else {
+                print("[ASR] filler-only '\(transcript)' — skipping")
                 break
             }
             send(["type": "response.create"])
@@ -168,6 +181,7 @@ final class RealtimeSession {
         case "response.created":
             isAssistantResponding = true
             audioScheduledThisResponse = false
+            responseGeneration += 1
             send(["type": "input_audio_buffer.clear"])
             scheduleSafetyTimeout()
             Task { @MainActor in self.isTutorSpeaking = true }
@@ -238,8 +252,11 @@ final class RealtimeSession {
         }
         marker.frameLength = 1
         marker.floatChannelData?[0][0] = 0
+        // Capture generation so a later response's response.created can't be mistakenly opened by this marker.
+        // Happens when AI draws+speaks: Response 1's marker must not fire during Response 2.
+        let gen = responseGeneration
         player.scheduleBuffer(marker, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            guard let self, self.isAssistantResponding else { return }
+            guard let self, self.isAssistantResponding, self.responseGeneration == gen else { return }
             DispatchQueue.main.async { self.openMic() }
         }
     }
@@ -284,7 +301,9 @@ final class RealtimeSession {
                 print("[VAD] barge-in confirmed — interrupting")
                 self.pendingBargeInTimer = nil
                 self.player.stop(); self.player.play()
-                // Explicit clear: player.stop() prevents marker completion from firing
+                // Bump generation: player.stop() cancels marker callbacks, but the guard
+                // here ensures any that somehow fire after stop() are also ignored.
+                self.responseGeneration += 1
                 self.isAssistantResponding   = false
                 self.lastAssistantFinishTime = .distantPast  // bypass post-playback cooldown
                 self.cancelSafetyTimeout()
