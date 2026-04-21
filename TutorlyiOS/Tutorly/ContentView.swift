@@ -381,7 +381,7 @@ struct VoicePill: View {
         .animatedBorder(cornerRadius: 24, lineWidth: 1.2, opacity: rs.isConnected ? 0.4 : 0.2)
     }
 
-    private func pillBackground(_ rs: RealtimeSession) -> some ShapeStyle {
+    private func pillBackground(rs: RealtimeSession) -> some ShapeStyle {
         if rs.isStudentSpeaking {
             return AnyShapeStyle(LinearGradient(
                 colors: [Theme.amber.opacity(0.12), Theme.paper],
@@ -395,13 +395,13 @@ struct VoicePill: View {
         return AnyShapeStyle(Theme.paper)
     }
 
-    private func pillShadow(_ rs: RealtimeSession) -> Color {
+    private func pillShadow(rs: RealtimeSession) -> Color {
         if rs.isStudentSpeaking { return Theme.amber.opacity(0.2) }
         if rs.isTutorSpeaking   { return Theme.teal.opacity(0.2) }
         return Color.black.opacity(0.07)
     }
 
-    private func statusTitle(_ rs: RealtimeSession) -> String {
+    private func statusTitle(rs: RealtimeSession) -> String {
         if !rs.isConnected      { return "Connect to start" }
         if rs.isMuted           { return "Microphone muted" }
         if rs.isStudentSpeaking { return "Listening…" }
@@ -410,7 +410,7 @@ struct VoicePill: View {
         return "Ready"
     }
 
-    private func statusSub(_ rs: RealtimeSession) -> String {
+    private func statusSub(rs: RealtimeSession) -> String {
         if !rs.isConnected      { return "Tap the mic to connect voice" }
         if rs.isMuted           { return "Tap to unmute" }
         if rs.isStudentSpeaking { return "Go ahead, I'm listening" }

@@ -411,7 +411,7 @@ final class RealtimeSession {
     private func setupAudio() throws {
         try AVAudioSession.sharedInstance().setCategory(
             .playAndRecord, mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetooth])
+            options: [.defaultToSpeaker, .allowBluetoothHFP])
         try AVAudioSession.sharedInstance().setActive(true, options: [.notifyOthersOnDeactivation])
 
         let playFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
