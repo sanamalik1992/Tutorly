@@ -2,14 +2,22 @@ import Foundation
 import AVFoundation
 
 // RealtimeSession — OpenAI Realtime API over WebSocket.
-// Self-interruption fix: mic gated by isAssistantResponding, cleared only when
-// the last audio sample plays out (marker buffer completion), not on response.done.
-// Barge-in: RMS gate in mic tap, timer created on MAIN RunLoop (audio thread
-// RunLoop does not process timers — previous bug that silenced all interruption).
-// Generation counter: when AI draws+speaks (2 responses), Response 1's marker must
-// not open the mic during Response 2. responseGeneration invalidates stale markers.
+//
+// Mic gate:       isAssistantResponding blocks mic-to-server while AI speaks.
+// Barge-in:       2 consecutive tap frames above RMS threshold → interrupt.
+//                 No timer needed — each frame is ~170 ms, so 2 frames ≈ 340 ms of speech.
+// Marker buffer:  1-frame silence scheduled after last audio chunk; its .dataPlayedBack
+//                 completion is the only correct moment to re-open the mic.
+// Generation:     responseGeneration ensures a stale marker from Response 1 can't open
+//                 the mic while Response 2 (post-draw speak) is playing.
+// Draw gate:      hasPendingDrawResponse prevents response.done from opening the mic in
+//                 the gap between the draw-only response and the follow-up speaking one.
+// tool_choice:    "required" on user-triggered response.create forces the model to always
+//                 call draw_on_whiteboard; "none" on the post-draw speaking response so
+//                 it doesn't attempt to draw a second time.
 
-private let bargeInRMSThreshold: Float = 0.018
+private let bargeInRMSThreshold: Float = 0.012   // lowered — easier to interrupt
+private let bargeInFramesNeeded: Int   = 2        // ~340 ms of continuous speech
 
 @Observable
 final class RealtimeSession {
@@ -39,15 +47,12 @@ final class RealtimeSession {
 
     @ObservationIgnored private var isAssistantResponding   = false
     @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
-    @ObservationIgnored private var pendingBargeInTimer:    Timer?
     @ObservationIgnored private var safetyTimeoutItem:      DispatchWorkItem?
     @ObservationIgnored private var bargeInAudioRMS:        Float = 0.0
+    @ObservationIgnored private var bargeInHighFrames:      Int   = 0
     @ObservationIgnored private var audioScheduledThisResponse = false
     @ObservationIgnored private var responseGeneration: Int = 0
-    // Set when handleDraw sends response.create so response.done skips openMic() —
-    // prevents the mic opening in the gap between the draw-only response and the
-    // follow-up speaking response.
-    @ObservationIgnored private var hasPendingDrawResponse = false
+    @ObservationIgnored private var hasPendingDrawResponse  = false
     private let postPlaybackCooldown: TimeInterval = 0.35
 
     @ObservationIgnored var currentMode: TutorMode = .teach
@@ -79,7 +84,6 @@ final class RealtimeSession {
 
     func disconnect() {
         cancelSafetyTimeout()
-        pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
         socket?.cancel(with: .goingAway, reason: nil); socket = nil
         if engine.isRunning { engine.inputNode.removeTap(onBus: 0); engine.stop() }
         converter = nil; isConnected = false; isTutorSpeaking = false; isStudentSpeaking = false
@@ -92,7 +96,7 @@ final class RealtimeSession {
         send(["type": "conversation.item.create",
               "item": ["type": "message", "role": "user",
                        "content": [["type": "input_text", "text": text]]] as [String: Any]])
-        send(["type": "response.create"])
+        sendResponseCreate(toolChoice: "required")
     }
 
     func updateMode(_ mode: TutorMode) {
@@ -133,6 +137,18 @@ final class RealtimeSession {
         socket?.send(.string(text)) { _ in }
     }
 
+    // Sends response.create with an optional per-response tool_choice override.
+    // "required" → model MUST call draw_on_whiteboard.
+    // "none"     → model speaks only, no tool call (used for the post-draw speaking turn).
+    private func sendResponseCreate(toolChoice: String) {
+        if toolChoice == "auto" {
+            send(["type": "response.create"])
+        } else {
+            send(["type": "response.create",
+                  "response": ["tool_choice": toolChoice] as [String: Any]])
+        }
+    }
+
     // MARK: - Event handling
 
     private func handle(_ text: String) {
@@ -157,36 +173,33 @@ final class RealtimeSession {
         case "input_audio_buffer.speech_stopped":
             Task { @MainActor in self.isStudentSpeaking = false }
 
-        // Whisper transcript is ready — only respond if the user actually said something.
-        // Gate 1: empty transcript (silence / ambient noise).
-        // Gate 2: filler-only transcript — Whisper hallucinates "um", "hmm" etc. during
-        //         pauses; the AI must not evaluate these as a real answer in quiz mode.
+        // Whisper transcript gate: only respond when the user actually said something real.
+        // Gate 1: empty string (silence / ambient noise).
+        // Gate 2: filler-only — Whisper hallucinates "um"/"hmm" during thinking pauses.
         case "conversation.item.input_audio_transcription.completed":
             let transcript = (json["transcript"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             print("[ASR] '\(transcript)'")
             guard !transcript.isEmpty else {
-                print("[ASR] empty transcript — skipping")
-                break
+                print("[ASR] empty — skipping"); break
             }
             let fillers: Set<String> = ["um","uh","mm","hmm","hm","ah","oh","er","erm","mhm","ugh","huh"]
-            let words = transcript.lowercased()
-                .components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            let meaningful = words.filter { !fillers.contains($0) }
-            guard !meaningful.isEmpty else {
-                print("[ASR] filler-only '\(transcript)' — skipping")
-                break
+            let words = transcript.lowercased().components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard !words.filter({ !fillers.contains($0) }).isEmpty else {
+                print("[ASR] filler-only '\(transcript)' — skipping"); break
             }
-            send(["type": "response.create"])
+            // Force model to draw before speaking on every user turn.
+            sendResponseCreate(toolChoice: "required")
 
         case "conversation.item.input_audio_transcription.failed":
-            print("[ASR] transcription failed — skipping response")
+            print("[ASR] transcription failed — skipping")
 
         case "response.created":
             isAssistantResponding = true
             audioScheduledThisResponse = false
             hasPendingDrawResponse = false
             responseGeneration += 1
+            bargeInHighFrames = 0
             send(["type": "input_audio_buffer.clear"])
             scheduleSafetyTimeout()
             Task { @MainActor in self.isTutorSpeaking = true }
@@ -222,15 +235,12 @@ final class RealtimeSession {
 
         case "response.done":
             cancelSafetyTimeout()
-            pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
-            // Don't open mic if a draw response.create is pending — the speaking
-            // response is about to start and will set isAssistantResponding again.
+            // Don't open mic when a draw-triggered speaking response is about to start.
             if !audioScheduledThisResponse && !hasPendingDrawResponse { openMic() }
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "response.cancelled":
             cancelSafetyTimeout()
-            pendingBargeInTimer?.invalidate(); pendingBargeInTimer = nil
             openMic()
             Task { @MainActor in self.isTutorSpeaking = false }
 
@@ -248,6 +258,7 @@ final class RealtimeSession {
     private func openMic() {
         cancelSafetyTimeout()
         isAssistantResponding   = false
+        bargeInHighFrames       = 0
         lastAssistantFinishTime = Date()
         print("[Mic] opened")
     }
@@ -259,8 +270,6 @@ final class RealtimeSession {
         }
         marker.frameLength = 1
         marker.floatChannelData?[0][0] = 0
-        // Capture generation so a later response's response.created can't be mistakenly opened by this marker.
-        // Happens when AI draws+speaks: Response 1's marker must not fire during Response 2.
         let gen = responseGeneration
         player.scheduleBuffer(marker, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self, self.isAssistantResponding, self.responseGeneration == gen else { return }
@@ -268,7 +277,6 @@ final class RealtimeSession {
         }
     }
 
-    // 45-second failsafe — clears stuck suppression if marker/cancel never arrives
     private func scheduleSafetyTimeout() {
         cancelSafetyTimeout()
         let item = DispatchWorkItem { [weak self] in
@@ -284,40 +292,32 @@ final class RealtimeSession {
         safetyTimeoutItem?.cancel(); safetyTimeoutItem = nil
     }
 
-    // MARK: - Barge-in (called from audio tap — timer MUST be created on main RunLoop)
+    // MARK: - Barge-in
+    // Called from the audio tap (background thread). Counts consecutive frames above
+    // the RMS threshold. No timer or main-thread dispatch needed for counting —
+    // only the actual interrupt is dispatched to main.
 
     private func checkBargeInFromTap() {
-        if bargeInAudioRMS < bargeInRMSThreshold {
-            guard pendingBargeInTimer != nil else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.pendingBargeInTimer?.invalidate()
-                self?.pendingBargeInTimer = nil
-            }
+        if bargeInAudioRMS >= bargeInRMSThreshold {
+            bargeInHighFrames += 1
+            print("[Barge] frame \(bargeInHighFrames) RMS \(String(format:"%.4f", bargeInAudioRMS))")
+        } else {
+            bargeInHighFrames = 0
             return
         }
-        guard pendingBargeInTimer == nil else { return }
-        // ── CRITICAL FIX ─────────────────────────────────────────────────────
-        // Timer.scheduledTimer on the audio thread's RunLoop never fires.
-        // Must dispatch to main so the timer is added to the main RunLoop.
-        // ─────────────────────────────────────────────────────────────────────
+        guard bargeInHighFrames >= bargeInFramesNeeded else { return }
+        bargeInHighFrames = 0
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isAssistantResponding, self.pendingBargeInTimer == nil else { return }
-            print("[VAD] barge-in gate (RMS \(String(format: "%.4f", self.bargeInAudioRMS)))")
-            self.pendingBargeInTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
-                guard let self else { return }
-                print("[VAD] barge-in confirmed — interrupting")
-                self.pendingBargeInTimer = nil
-                self.player.stop(); self.player.play()
-                // Bump generation: player.stop() cancels marker callbacks, but the guard
-                // here ensures any that somehow fire after stop() are also ignored.
-                self.responseGeneration += 1
-                self.isAssistantResponding   = false
-                self.lastAssistantFinishTime = .distantPast  // bypass post-playback cooldown
-                self.cancelSafetyTimeout()
-                self.isTutorSpeaking   = false
-                self.isStudentSpeaking = true
-                self.send(["type": "response.cancel"])
-            }
+            guard let self, self.isAssistantResponding else { return }
+            print("[Barge] confirmed — interrupting")
+            self.player.stop(); self.player.play()
+            self.responseGeneration += 1
+            self.isAssistantResponding   = false
+            self.lastAssistantFinishTime = .distantPast
+            self.cancelSafetyTimeout()
+            self.isTutorSpeaking   = false
+            self.isStudentSpeaking = true
+            self.send(["type": "response.cancel"])
         }
     }
 
@@ -346,10 +346,9 @@ final class RealtimeSession {
         send(["type": "conversation.item.create",
               "item": ["type": "function_call_output", "call_id": callId,
                        "output": "{\"ok\":true}"] as [String: Any]])
-        // Flag before sending so response.done (which fires around the same time)
-        // knows not to call openMic() — the speaking response is about to start.
         hasPendingDrawResponse = true
-        send(["type": "response.create"])
+        // Speaking turn: no tool call needed, just voice.
+        sendResponseCreate(toolChoice: "none")
     }
 
     // MARK: - Session configuration
@@ -368,10 +367,10 @@ final class RealtimeSession {
                 "input_audio_transcription": ["model": "whisper-1"],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": 0.55,        // less sensitive — avoids echo false-positives
+                    "threshold": 0.55,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 800, // enough time to pause and think
-                    "create_response": false,   // WE create responses, only after Whisper confirms non-empty speech
+                    "silence_duration_ms": 800,
+                    "create_response": false,
                     "interrupt_response": true
                 ] as [String: Any],
                 "tools": [drawToolSchema()],
@@ -392,21 +391,20 @@ final class RealtimeSession {
         BREVITY — CRITICAL: Maximum 1-2 sentences per turn. Say one thing, then stop \
         and wait for the student. Never lecture. Never keep talking after making a point.
 
-        WHITEBOARD — CALL draw_on_whiteboard ON EVERY SINGLE RESPONSE, NO EXCEPTIONS: \
-        • Always call it BEFORE speaking so the drawing appears as you talk \
-        • New topic → clear:true, write the topic title large at the top \
-        • Equation → write it as a text command \
-        • Concept → write the key word, draw a circle around it \
-        • Process → number the steps, connect with arrows \
-        • Even for a one-word answer, write that word on the board \
-        If you are about to speak without having called draw_on_whiteboard first — stop, \
-        call draw_on_whiteboard, then speak.
+        WHITEBOARD — YOU WILL BE FORCED TO CALL draw_on_whiteboard ON EVERY RESPONSE. \
+        This is enforced by the API. When you receive a user message, your first action \
+        MUST be to call draw_on_whiteboard before any speech output: \
+        • New topic → clear:true + write the topic title large \
+        • Equation → write it as text \
+        • Concept → write the key word, circle it \
+        • Process → numbered steps with arrows \
+        • Even for a simple yes/no — write the key word on the board.
         """
         switch mode {
         case .teach:
             return base + "\n\nMode: TEACH. draw_on_whiteboard → explain in 1-2 sentences → ask 'make sense?' → wait."
         case .quiz:
-            return base + "\n\nMode: QUIZ. draw_on_whiteboard the question concept → ask one short question → wait for answer → draw correct solution."
+            return base + "\n\nMode: QUIZ. draw_on_whiteboard the concept → ask one short question → wait → draw correct solution."
         }
     }
 
@@ -494,7 +492,7 @@ final class RealtimeSession {
 
             self.updateBargeInRMS(buffer: outBuf)
 
-            // Mic gate: no audio to server while assistant is speaking
+            // Mic gate: while AI is speaking, only check for barge-in — send nothing to server.
             if self.isAssistantResponding {
                 self.checkBargeInFromTap()
                 return
