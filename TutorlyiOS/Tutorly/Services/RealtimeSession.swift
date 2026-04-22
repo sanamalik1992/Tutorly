@@ -8,7 +8,7 @@ import AVFoundation
 // PRODUCTION NOTE: For a shipped app, mint ephemeral tokens from a server endpoint
 // instead of sending the raw API key from the device.
 
-private let bargeInRMSThreshold: Float = 0.015   // real speech ~0.02+, echo ~0.003-0.008
+private let bargeInRMSThreshold: Float = 0.010   // real speech ~0.02+, echo ~0.003-0.008
 
 @Observable
 final class RealtimeSession {
@@ -42,9 +42,10 @@ final class RealtimeSession {
     @ObservationIgnored private var isAssistantResponding = false
     @ObservationIgnored private var lastAssistantFinishTime: Date = .distantPast
     @ObservationIgnored private var lastSpeechStartedTime: Date = .distantPast
+    @ObservationIgnored private var responseStartedAt: Date?
     @ObservationIgnored private var pendingBargeInTimer: Timer?
     @ObservationIgnored private var bargeInAudioRMS: Float = 0.0
-    private let bargeinCooldown: TimeInterval = 0.25
+    private let bargeinCooldown: TimeInterval = 0.15
 
     // Mode toggle — updated by TutorSession.mode.didSet via updateMode()
     @ObservationIgnored var currentMode: TutorMode = .teach
@@ -170,6 +171,11 @@ final class RealtimeSession {
 
         case "input_audio_buffer.speech_started":
             let now = Date()
+            // Ignore speech_started in the first 200ms of assistant response — almost certainly echo
+            if let start = responseStartedAt, now.timeIntervalSince(start) < 0.2 {
+                print("[VAD] speech_started ignored (within 200ms of response start — echo window)")
+                break
+            }
             lastSpeechStartedTime = now
             print("[VAD] speech_started | assistantResponding=\(isAssistantResponding) rms=\(String(format: "%.4f", bargeInAudioRMS))")
             if isAssistantResponding {
@@ -194,6 +200,7 @@ final class RealtimeSession {
 
         case "response.created":
             isAssistantResponding = true
+            responseStartedAt = Date()
             Task { @MainActor in self.isTutorSpeaking = true }
 
         case "response.output_item.added":
@@ -225,6 +232,7 @@ final class RealtimeSession {
             pendingBargeInTimer?.invalidate()
             pendingBargeInTimer = nil
             isAssistantResponding = false
+            responseStartedAt = nil
             Task { @MainActor in self.isTutorSpeaking = false }
 
         case "error":
@@ -309,12 +317,13 @@ final class RealtimeSession {
                 "input_audio_transcription": ["model": "whisper-1"],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": 0.65,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 1100,
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 500,
+                    "silence_duration_ms": 700,
                     "create_response": true,
                     "interrupt_response": true
                 ] as [String: Any],
+                "max_response_output_tokens": 150,
                 "tools": [drawToolSchema()],
                 "tool_choice": "auto"
             ] as [String: Any]
@@ -323,6 +332,11 @@ final class RealtimeSession {
 
     private func buildInstructions(mode: TutorMode) -> String {
         let base = """
+        CRITICAL: Keep replies ULTRA SHORT. One sentence is ideal, two sentences max. No long \
+        explanations — the whiteboard handles the visual detail, your voice handles the hook. \
+        LANGUAGE: English only. Never respond in any other language regardless of what the \
+        student says.
+
         You are a friendly, upbeat university teaching assistant — think smart older sibling \
         who's just finished their degree and genuinely loves explaining things. Energetic, warm, \
         uses casual phrasing ('gotcha', 'nice one', 'okay so', 'right'), asks quick checking \
