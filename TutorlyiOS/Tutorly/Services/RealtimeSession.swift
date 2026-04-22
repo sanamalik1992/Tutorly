@@ -172,8 +172,8 @@ final class RealtimeSession {
         case "input_audio_buffer.speech_started":
             let now = Date()
             // Ignore speech_started in the first 200ms of assistant response — almost certainly echo
-            if let start = responseStartedAt, now.timeIntervalSince(start) < 0.2 {
-                print("[VAD] speech_started ignored (within 200ms of response start — echo window)")
+            if let start = responseStartedAt, now.timeIntervalSince(start) < 0.5 {
+                print("[VAD] speech_started ignored (within 500ms of response start — echo window)")
                 break
             }
             lastSpeechStartedTime = now
@@ -333,7 +333,7 @@ final class RealtimeSession {
             "type": "response.create",
             "response": [
                 "modalities": ["text", "audio"],
-                "instructions": "Greet the student in one short English sentence. Ask what they want to learn today. English only, always."
+                "instructions": "Greet the student in one short English sentence. Ask what they want to learn. English only. Also make a mental note: you have a whiteboard via the draw_on_whiteboard tool. CALL IT whenever you explain anything visual or mathematical. Don't just mention that you have a whiteboard — use it constantly throughout the session."
             ] as [String: Any]
         ])
     }
@@ -349,9 +349,13 @@ final class RealtimeSession {
         replies ULTRA SHORT — one sentence ideally, two maximum. Long answers kill conversation. \
         After every short reply, invite a follow-up.
 
-        You have a draw_on_whiteboard tool. CALL IT OFTEN — for any maths, equation, diagram, \
-        graph, or visual concept. Sketch as you talk. Narrate as you draw. Never describe a \
-        drawing without calling the tool.
+        WHITEBOARD TOOL — NON-NEGOTIABLE: You have draw_on_whiteboard. You MUST call it for \
+        every maths problem, equation, diagram, graph, geometric shape, formula, step-by-step \
+        solution, or any visual explanation. When a student asks anything involving numbers, \
+        symbols, shapes, curves, or spatial relationships — call the tool IMMEDIATELY at the \
+        start of your response. The tool is not supplementary; drawing IS the teaching method \
+        here. If you answer a maths question without calling draw_on_whiteboard, you have \
+        failed the core task.
 
         """
         switch mode {
@@ -366,12 +370,7 @@ final class RealtimeSession {
         [
             "type": "function",
             "name": "draw_on_whiteboard",
-            "description": """
-                Draw diagrams, equations, and visual aids on the student's whiteboard.
-                Use for maths steps, flow charts, concept maps, labelled figures.
-                Canvas is 900 wide x 600 tall, origin top-left. Colors: \
-                #1E3A8A navy, #E09C1F amber, #3D9396 teal, #C0392B red.
-                """,
+            "description": "Draw on the shared whiteboard. You MUST call this tool whenever explaining any mathematical concept, equation, geometry, graph, diagram, formula, step-by-step working, or visual relationship. Calling this tool is part of the expected response for educational content — not optional. Examples of when to call: solving '2x+3=11' (draw each step), explaining 'pythagorean theorem' (draw a triangle with labeled sides), teaching 'parabolas' (sketch the curve). Canvas is 900 wide x 600 tall, origin top-left. Colors: #1E3A8A navy, #E09C1F amber, #3D9396 teal, #C0392B red. If you find yourself describing a drawing in words instead of calling this tool, stop and call the tool instead.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -412,6 +411,17 @@ final class RealtimeSession {
         try audioSession.setCategory(.playAndRecord, mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetooth])
         try audioSession.setActive(true, options: [.notifyOthersOnDeactivation])
+
+        // Explicitly enable iOS voice processing (AEC + AGC + noise suppression) on input node.
+        // AVAudioSession.voiceChat mode alone isn't enough — some devices require explicit
+        // setVoiceProcessingEnabled(true) on the AUAudioUnit. This is the single most important
+        // setting for killing speaker-to-mic echo on phone speakers.
+        do {
+            try engine.inputNode.setVoiceProcessingEnabled(true)
+            print("[Audio] voice processing enabled (AEC active)")
+        } catch {
+            print("[Audio] voice processing enable FAILED: \(error) — echo may occur")
+        }
 
         // Query input format AFTER the session is active — on iOS Simulator and
         // cold-start real devices the inputNode returns 0 channels / 0 sample rate
