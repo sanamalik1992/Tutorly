@@ -118,7 +118,7 @@ final class RealtimeSession {
 
     private func openSocket(key: String) {
         var req = URLRequest(
-            url: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview")!)
+            url: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime")!)
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("realtime=v1",   forHTTPHeaderField: "OpenAI-Beta")
 
