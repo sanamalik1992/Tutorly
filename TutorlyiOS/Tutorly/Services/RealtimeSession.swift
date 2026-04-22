@@ -389,10 +389,24 @@ final class RealtimeSession {
     // MARK: - Audio I/O
 
     private func setupAudio() throws {
-        try AVAudioSession.sharedInstance().setCategory(
-            .playAndRecord, mode: .voiceChat,
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.playAndRecord, mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetooth])
-        try AVAudioSession.sharedInstance().setActive(true, options: [.notifyOthersOnDeactivation])
+        try audioSession.setActive(true, options: [.notifyOthersOnDeactivation])
+
+        // Query input format AFTER the session is active — on iOS Simulator and
+        // cold-start real devices the inputNode returns 0 channels / 0 sample rate
+        // before AVAudioSession is fully active, causing installTap to crash.
+        let hwFmt = engine.inputNode.outputFormat(forBus: 0)
+        guard hwFmt.sampleRate > 0, hwFmt.channelCount > 0 else {
+            throw NSError(
+                domain: "RealtimeSession",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Audio input format invalid (sampleRate=\(hwFmt.sampleRate), " +
+                    "channels=\(hwFmt.channelCount)). Microphone may be unavailable."]
+            )
+        }
 
         // Build playback graph once — survives stop/start cycles
         let playFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
@@ -402,10 +416,6 @@ final class RealtimeSession {
             isEngineGraphBuilt = true
         }
 
-        // Hardware input format (typically 48 kHz Float32, possibly stereo).
-        // Install tap at hardware's native format to avoid "format mismatch" crash,
-        // then resample to 24 kHz mono Float32 via AVAudioConverter.
-        let hwFmt   = engine.inputNode.outputFormat(forBus: 0)
         let monoFmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
 
         guard let conv = AVAudioConverter(from: hwFmt, to: monoFmt) else {
