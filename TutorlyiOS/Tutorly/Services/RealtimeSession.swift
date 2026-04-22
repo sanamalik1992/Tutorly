@@ -161,6 +161,8 @@ final class RealtimeSession {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String else { return }
 
+        print("[WS] event: \(type)")
+
         switch type {
 
         case "session.created":
@@ -215,6 +217,7 @@ final class RealtimeSession {
             let name   = (json["name"]    as? String) ?? pendingCallName ?? ""
             let callId = (json["call_id"] as? String) ?? pendingCallId   ?? ""
             let args   = (json["arguments"] as? String) ?? ""
+            print("[Draw] function_call.done received — name=\(name), callId=\(callId), argsLen=\(args.count), argsPreview=\(String(args.prefix(200)))")
             if name == "draw_on_whiteboard" { handleDraw(args: args, callId: callId) }
             pendingCallName = nil; pendingCallId = nil
 
@@ -267,10 +270,15 @@ final class RealtimeSession {
     // MARK: - Draw tool
 
     private func handleDraw(args: String, callId: String) {
-        if let d = args.data(using: .utf8),
-           let block = try? JSONDecoder().decode(DrawBlock.self, from: d) {
-            print("[Draw] received \(block.commands.count) commands")
-            Task { @MainActor in self.onDraw?(block) }
+        print("[Draw] handleDraw called with \(args.count) bytes of args")
+        if let d = args.data(using: .utf8) {
+            do {
+                let block = try JSONDecoder().decode(DrawBlock.self, from: d)
+                print("[Draw] decoded \(block.commands.count) commands")
+                Task { @MainActor in self.onDraw?(block) }
+            } catch {
+                print("[Draw] decode FAILED: \(error.localizedDescription)")
+            }
         }
         send([
             "type": "conversation.item.create",
@@ -287,6 +295,8 @@ final class RealtimeSession {
 
     private func configureSession() {
         print("[Session] configuring with mode=\(currentMode.rawValue) — sending session.update")
+        print("[Config] instructions length=\(buildInstructions(mode: currentMode).count) chars")
+        print("[Config] instructions head: \(String(buildInstructions(mode: currentMode).prefix(300)))")
         send([
             "type": "session.update",
             "session": [
