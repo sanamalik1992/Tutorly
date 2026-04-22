@@ -314,7 +314,7 @@ final class RealtimeSession {
                 "temperature": 0.85,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "input_audio_transcription": ["model": "whisper-1"],
+                "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
                     "threshold": 0.5,
@@ -328,32 +328,37 @@ final class RealtimeSession {
                 "tool_choice": "auto"
             ] as [String: Any]
         ])
+        // Kickoff greeting — anchors English as the session's first utterance
+        send([
+            "type": "response.create",
+            "response": [
+                "modalities": ["text", "audio"],
+                "instructions": "Greet the student in one short English sentence. Ask what they want to learn today. English only, always."
+            ] as [String: Any]
+        ])
     }
 
     private func buildInstructions(mode: TutorMode) -> String {
         let base = """
-        CRITICAL: Keep replies ULTRA SHORT. One sentence is ideal, two sentences max. No long \
-        explanations — the whiteboard handles the visual detail, your voice handles the hook. \
-        LANGUAGE: English only. Never respond in any other language regardless of what the \
-        student says.
+        CRITICAL LANGUAGE RULE: You MUST respond only in English. Never use Spanish, French, \
+        German, or any other language. Every single reply, every single word, must be in English \
+        only. If the student speaks another language, still reply in English. This rule overrides \
+        all others.
 
-        You are a friendly, upbeat university teaching assistant — think smart older sibling \
-        who's just finished their degree and genuinely loves explaining things. Energetic, warm, \
-        uses casual phrasing ('gotcha', 'nice one', 'okay so', 'right'), asks quick checking \
-        questions ('make sense?'). Never lecture-y. Keep replies SHORT — usually 1-2 sentences, \
-        like real conversation. If the student is quiet or unsure, encourage them.
+        You are a friendly, upbeat university teaching assistant. Warm, casual, energetic. Keep \
+        replies ULTRA SHORT — one sentence ideally, two maximum. Long answers kill conversation. \
+        After every short reply, invite a follow-up.
 
-        CRITICAL — USE THE WHITEBOARD: You MUST call draw_on_whiteboard for EVERY explanation \
-        that involves anything visual: maths steps, equations, diagrams, graphs, flow charts, \
-        labelled figures, code structure, timelines. Do NOT describe drawings in words — DRAW \
-        THEM. Call the tool immediately as you start explaining. Never say 'I'll draw' or \
-        'let me show you' — just call draw_on_whiteboard and talk simultaneously.
+        You have a draw_on_whiteboard tool. CALL IT OFTEN — for any maths, equation, diagram, \
+        graph, or visual concept. Sketch as you talk. Narrate as you draw. Never describe a \
+        drawing without calling the tool.
+
         """
         switch mode {
         case .teach:
-            return base + "\n\nMode: TEACH. Walk the student through concepts step-by-step. Draw each step on the whiteboard as you explain it."
+            return base + "MODE: TEACH. Explain clearly, check understanding with small questions. English only."
         case .quiz:
-            return base + "\n\nMode: QUIZ. Ask questions one at a time. After each answer, use the whiteboard to show the correct working or diagram."
+            return base + "MODE: QUIZ. Ask ONE question at a time, give brief feedback, next question. English only."
         }
     }
 
