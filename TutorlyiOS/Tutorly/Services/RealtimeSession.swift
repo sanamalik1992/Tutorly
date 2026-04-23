@@ -13,7 +13,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     // Private
     private var socket: URLSessionWebSocketTask?
-    private lazy var urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    private var urlSession: URLSession!
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
@@ -25,6 +25,13 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var pendingCallName: String?
     private var pendingCallId: String?
     private var transcriptBuffer = ""
+
+    // MARK: - Init
+
+    override init() {
+        super.init()
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    }
 
     // MARK: - Public
 
@@ -85,7 +92,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     private func setupAudio() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothA2DP])
         try session.setActive(true, options: [.notifyOthersOnDeactivation])
 
         do {
