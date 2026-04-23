@@ -236,6 +236,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             isAssistantResponding = false
             Task { @MainActor in self.voiceState = .idle }
 
+        case "session.updated":
+            print("[Config] session.update ACCEPTED")
+
         case "error":
             if let e = json["error"] as? [String: Any], let msg = e["message"] as? String {
                 print("[WS] ERROR: \(msg)")
@@ -294,7 +297,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 "modalities": ["text", "audio"],
                 "instructions": instructions,
                 "voice": "sage",
-                "temperature": 0.85,
+                "temperature": NSNumber(value: 0.8),
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
@@ -309,7 +312,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             "type": "response.create",
             "response": [
                 "modalities": ["text", "audio"],
-                "instructions": "Greet the student warmly in one short English sentence. Ask what they'd like to learn today. English only."
+                "instructions": "Greet the student warmly in ONE short sentence IN ENGLISH. Ask what they'd like to learn today. Reply in ENGLISH ONLY, never any other language. English. English. English."
             ] as [String: Any]
         ])
     }
