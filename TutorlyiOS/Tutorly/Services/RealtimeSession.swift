@@ -26,6 +26,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var pendingCallName: String?
     private var pendingCallId: String?
     private var transcriptBuffer = ""
+    @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
 
     // MARK: - Init
 
@@ -71,35 +72,54 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     func startTalking() {
         guard isConnected else { return }
-        if isAssistantResponding {
-            player.stop()
-            send(["type": "response.cancel"])
-        }
-        if !engine.isRunning {
-            print("[Audio] engine not running when startTalking called — restarting")
-            do { try engine.start() } catch {
-                print("[Audio] engine restart FAILED: \(error)")
-                errorMessage = "Mic not ready — try again"
-                return
+        Task { @MainActor in
+            if isAssistantResponding {
+                player.stop()
+                send(["type": "response.cancel"])
+                // Wait up to 800ms for server to confirm cancellation via response.done
+                await withCheckedContinuation { cont in
+                    self.pendingStartContinuation = cont
+                    Task {
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        if let c = self.pendingStartContinuation {
+                            self.pendingStartContinuation = nil
+                            c.resume()
+                        }
+                    }
+                }
             }
+            if !engine.isRunning {
+                print("[Audio] engine not running when startTalking called — restarting")
+                do { try engine.start() } catch {
+                    print("[Audio] engine restart FAILED: \(error)")
+                    self.errorMessage = "Mic not ready — try again"
+                    return
+                }
+            }
+            bytesAppendedThisTurn = 0
+            isTalking = true
+            voiceState = .listening
+            print("[Audio] push-to-talk START")
         }
-        bytesAppendedThisTurn = 0
-        isTalking = true
-        voiceState = .listening
-        print("[Audio] push-to-talk START")
     }
 
     func stopTalking() {
         guard isTalking else { return }
         isTalking = false
         voiceState = .idle
-        let minBytes = 24000 * 2 * 0.12  // ~120ms at 24kHz PCM16 mono
+        print("[Audio] STOP called — bytesAppendedThisTurn=\(bytesAppendedThisTurn), isTalking=\(isTalking)")
+        let minBytes: Double = 24000 * 2 * 0.15  // 150ms at 24kHz PCM16 mono
         if Double(bytesAppendedThisTurn) < minBytes {
             print("[Audio] STOP — only \(bytesAppendedThisTurn) bytes captured, aborting (hold longer)")
             send(["type": "input_audio_buffer.clear"])
             Task { @MainActor in
                 self.errorMessage = "Hold the orb a bit longer while speaking"
             }
+            return
+        }
+        guard !isAssistantResponding else {
+            print("[Audio] STOP — assistant still responding, skipping response.create")
+            send(["type": "input_audio_buffer.commit"])
             return
         }
         print("[Audio] STOP — committing \(bytesAppendedThisTurn) bytes")
@@ -257,6 +277,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         case "response.done":
             isAssistantResponding = false
+            pendingStartContinuation?.resume()
+            pendingStartContinuation = nil
             Task { @MainActor in self.voiceState = .idle }
 
         case "session.updated":
@@ -303,6 +325,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Task { @MainActor in self.liveCaption = "" }
 
         let instructions = """
+        CRITICAL: Every single response you give MUST start with a call to the draw_on_whiteboard tool. Sketch something relevant to what you're saying, even if small. If you cannot think of anything to draw, sketch a circle with a label. You MUST call the tool — no exceptions.
+
         You are Hoot — a warm, encouraging AI tutor. You help students one-on-one via voice.
 
         LANGUAGE: Reply in English only, always. Never Spanish, French, or any other language.
@@ -320,7 +344,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         send([
             "type": "session.update",
             "session": [
-                "type": "realtime",
                 "model": "gpt-realtime",
                 "output_modalities": ["audio"],
                 "audio": [
@@ -337,7 +360,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 ] as [String: Any],
                 "instructions": instructions,
                 "tools": [drawToolSchema()],
-                "tool_choice": "auto"
+                "tool_choice": ["type": "function", "name": "draw_on_whiteboard"] as [String: Any]
             ] as [String: Any]
         ])
 
