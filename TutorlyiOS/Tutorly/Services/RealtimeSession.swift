@@ -338,27 +338,20 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Coordinates for drawing: canvas is 900 wide × 600 tall, (0,0) at top-left. Use x in 50-850 range, y in 50-550 range. Text size 20-40pt.
         """
 
-        print("[Config] sending session.update with model=gpt-realtime (GA schema), voice=marin")
+        print("[Config] sending session.update (flat schema), voice=marin")
         print("[Config] instructions length=\(instructions.count)")
 
         send([
             "type": "session.update",
             "session": [
-                "model": "gpt-realtime",
-                "output_modalities": ["audio"],
-                "audio": [
-                    "input": [
-                        "format": ["type": "audio/pcm", "rate": NSNumber(value: 24000)] as [String: Any],
-                        "transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
-                        "turn_detection": NSNull()
-                    ] as [String: Any],
-                    "output": [
-                        "format": ["type": "audio/pcm"] as [String: Any],
-                        "voice": "marin",
-                        "speed": NSNumber(value: 1.0)
-                    ] as [String: Any]
-                ] as [String: Any],
+                "modalities": ["audio", "text"],
                 "instructions": instructions,
+                "voice": "marin",
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
+                "turn_detection": NSNull(),
+                "temperature": NSNumber(value: 0.8),
                 "tools": [drawToolSchema()],
                 "tool_choice": ["type": "function", "name": "draw_on_whiteboard"] as [String: Any]
             ] as [String: Any]
