@@ -17,8 +17,10 @@ struct VoiceDock: View {
             VStack(spacing: 6) {
                 VoiceOrb(state: session.realtime.voiceState, size: 88)
                     .scaleEffect(isPressing ? 1.05 : 1.0)
+                    .frame(width: 110, height: 110)
+                    .contentShape(Circle())
                     .gesture(
-                        LongPressGesture(minimumDuration: 0.01)
+                        LongPressGesture(minimumDuration: 0.0)
                             .sequenced(before: DragGesture(minimumDistance: 0))
                             .updating($isPressing) { value, state, _ in
                                 switch value {

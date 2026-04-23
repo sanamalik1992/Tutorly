@@ -21,6 +21,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private let sampleRate: Double = 24_000
 
     private var isTalking = false
+    private var bytesAppendedThisTurn = 0
     private var isAssistantResponding = false
     private var pendingCallName: String?
     private var pendingCallId: String?
@@ -74,6 +75,15 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             player.stop()
             send(["type": "response.cancel"])
         }
+        if !engine.isRunning {
+            print("[Audio] engine not running when startTalking called — restarting")
+            do { try engine.start() } catch {
+                print("[Audio] engine restart FAILED: \(error)")
+                errorMessage = "Mic not ready — try again"
+                return
+            }
+        }
+        bytesAppendedThisTurn = 0
         isTalking = true
         voiceState = .listening
         print("[Audio] push-to-talk START")
@@ -83,7 +93,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         guard isTalking else { return }
         isTalking = false
         voiceState = .idle
-        print("[Audio] push-to-talk STOP — committing")
+        let minBytes = 24000 * 2 * 0.12  // ~120ms at 24kHz PCM16 mono
+        if Double(bytesAppendedThisTurn) < minBytes {
+            print("[Audio] STOP — only \(bytesAppendedThisTurn) bytes captured, aborting (hold longer)")
+            send(["type": "input_audio_buffer.clear"])
+            Task { @MainActor in
+                self.errorMessage = "Hold the orb a bit longer while speaking"
+            }
+            return
+        }
+        print("[Audio] STOP — committing \(bytesAppendedThisTurn) bytes")
         send(["type": "input_audio_buffer.commit"])
         send(["type": "response.create"])
     }
@@ -125,6 +144,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
             guard let self, self.isTalking, let conv = self.converter else { return }
+            if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
+                print("[Audio] mic buffer flowing (\(buf.frameLength) frames)")
+            }
             let outCapacity = AVAudioFrameCount(Double(buf.frameLength) * self.sampleRate / hwFmt.sampleRate)
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: outCapacity) else { return }
             var err: NSError?
@@ -141,6 +163,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 }
             }
             self.send(["type": "input_audio_buffer.append", "audio": pcm.base64EncodedString()])
+            self.bytesAppendedThisTurn += pcm.count
         }
 
         try engine.start()
@@ -276,6 +299,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Session configuration
 
     private func configureSession() {
+        transcriptBuffer = ""
+        Task { @MainActor in self.liveCaption = "" }
+
         let instructions = """
         You are Hoot — a warm, encouraging AI tutor. You help students one-on-one via voice.
 
