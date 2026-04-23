@@ -1,44 +1,32 @@
 import SwiftUI
 
 enum Theme {
-    // Brand colors from the Tutorly logo
-    static let navy = Color(red: 0.118, green: 0.227, blue: 0.541)        // #1E3A8A
-    static let navyDeep = Color(red: 0.086, green: 0.165, blue: 0.388)   // #162A63
-    static let teal = Color(red: 0.357, green: 0.710, blue: 0.722)        // #5BB5B8
-    static let tealDeep = Color(red: 0.239, green: 0.576, blue: 0.588)   // #3D9396
-    static let amber = Color(red: 0.961, green: 0.725, blue: 0.259)      // #F5B942
-    static let amberDeep = Color(red: 0.878, green: 0.612, blue: 0.122)  // #E09C1F
+    // Surfaces
+    static let bg      = Color(red: 0.102, green: 0.094, blue: 0.133)  // #1A1822
+    static let bgElev  = Color(red: 0.141, green: 0.129, blue: 0.180)  // #24212E
+    static let surface = Color(red: 0.165, green: 0.153, blue: 0.204)  // #2A2734
 
-    static let ink = Color(red: 0.059, green: 0.102, blue: 0.180)         // #0F1A2E
-    static let inkSoft = Color(red: 0.176, green: 0.243, blue: 0.353)    // #2D3E5A
-    static let inkFaint = Color(red: 0.420, green: 0.478, blue: 0.561)   // #6B7A8F
-    static let line = Color(red: 0.859, green: 0.894, blue: 0.925)       // #DBE4EC
-    static let bg = Color(red: 0.980, green: 0.984, blue: 0.988)          // #FAFBFC
-    static let bgDeep = Color(red: 0.933, green: 0.953, blue: 0.961)     // #EEF3F5
-    static let paper = Color.white
+    // Ink
+    static let ink       = Color(red: 0.949, green: 0.937, blue: 0.910) // #F2EFE8
+    static let inkSoft   = Color(red: 0.710, green: 0.690, blue: 0.753) // #B5B0C0
+    static let inkMuted  = Color(red: 0.478, green: 0.463, blue: 0.533) // #7A7688
 
-    static let brandGradient = LinearGradient(
-        colors: [navy, Color(red: 0.231, green: 0.416, blue: 0.722), teal],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    // Accent (coral)
+    static let accent     = Color(red: 1.0,   green: 0.420, blue: 0.208) // #FF6B35
+    static let accentSoft = Color(red: 1.0,   green: 0.420, blue: 0.208).opacity(0.18)
+    static let accentDeep = Color(red: 1.0,   green: 0.690, blue: 0.541) // #FFB08A
+    static let accentGlow = Color(red: 1.0,   green: 0.420, blue: 0.208).opacity(0.5)
 
-    // Drawing palette (matches web version)
-    static let drawColors: [(name: String, color: Color)] = [
-        ("Ink", ink),
-        ("Navy", navy),
-        ("Teal", tealDeep),
-        ("Amber", amberDeep),
-        ("Rose", Color(red: 0.780, green: 0.243, blue: 0.373))
-    ]
+    // Hairlines
+    static let hairline       = Color.white.opacity(0.08)
+    static let hairlineStrong = Color.white.opacity(0.16)
 }
 
-// Fonts
 extension Font {
-    static func serif(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+    static func ui(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
     }
-    static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .monospaced)
+    static func display(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .serif)
     }
 }
