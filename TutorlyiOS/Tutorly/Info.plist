@@ -41,9 +41,9 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Tutorly needs microphone access so you can speak to your AI tutor.</string>
+	<string>Tutorly needs mic access so you can talk with your AI tutor.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Tutorly uses speech recognition to understand what you say to your tutor.</string>
+	<string>Tutorly uses speech recognition to understand what you say.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>
