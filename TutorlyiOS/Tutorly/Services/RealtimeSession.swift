@@ -13,7 +13,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     // Private
     private var socket: URLSessionWebSocketTask?
-    private lazy var urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    private var urlSession: URLSession!
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
@@ -21,10 +21,19 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private let sampleRate: Double = 24_000
 
     private var isTalking = false
+    private var bytesAppendedThisTurn = 0
     private var isAssistantResponding = false
     private var pendingCallName: String?
     private var pendingCallId: String?
     private var transcriptBuffer = ""
+    @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
+
+    // MARK: - Init
+
+    override init() {
+        super.init()
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    }
 
     // MARK: - Public
 
@@ -63,20 +72,57 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     func startTalking() {
         guard isConnected else { return }
-        if isAssistantResponding {
-            player.stop()
-            send(["type": "response.cancel"])
+        Task { @MainActor in
+            if isAssistantResponding {
+                player.stop()
+                send(["type": "response.cancel"])
+                // Wait up to 800ms for server to confirm cancellation via response.done
+                await withCheckedContinuation { cont in
+                    self.pendingStartContinuation = cont
+                    Task {
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        if let c = self.pendingStartContinuation {
+                            self.pendingStartContinuation = nil
+                            c.resume()
+                        }
+                    }
+                }
+            }
+            if !engine.isRunning {
+                print("[Audio] engine not running when startTalking called — restarting")
+                do { try engine.start() } catch {
+                    print("[Audio] engine restart FAILED: \(error)")
+                    self.errorMessage = "Mic not ready — try again"
+                    return
+                }
+            }
+            bytesAppendedThisTurn = 0
+            isTalking = true
+            voiceState = .listening
+            print("[Audio] push-to-talk START")
         }
-        isTalking = true
-        voiceState = .listening
-        print("[Audio] push-to-talk START")
     }
 
     func stopTalking() {
         guard isTalking else { return }
         isTalking = false
         voiceState = .idle
-        print("[Audio] push-to-talk STOP — committing")
+        print("[Audio] STOP called — bytesAppendedThisTurn=\(bytesAppendedThisTurn), isTalking=\(isTalking)")
+        let minBytes: Double = 24000 * 2 * 0.15  // 150ms at 24kHz PCM16 mono
+        if Double(bytesAppendedThisTurn) < minBytes {
+            print("[Audio] STOP — only \(bytesAppendedThisTurn) bytes captured, aborting (hold longer)")
+            send(["type": "input_audio_buffer.clear"])
+            Task { @MainActor in
+                self.errorMessage = "Hold the orb a bit longer while speaking"
+            }
+            return
+        }
+        guard !isAssistantResponding else {
+            print("[Audio] STOP — assistant still responding, skipping response.create")
+            send(["type": "input_audio_buffer.commit"])
+            return
+        }
+        print("[Audio] STOP — committing \(bytesAppendedThisTurn) bytes")
         send(["type": "input_audio_buffer.commit"])
         send(["type": "response.create"])
     }
@@ -85,7 +131,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     private func setupAudio() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothA2DP])
         try session.setActive(true, options: [.notifyOthersOnDeactivation])
 
         do {
@@ -118,6 +164,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
             guard let self, self.isTalking, let conv = self.converter else { return }
+            if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
+                print("[Audio] mic buffer flowing (\(buf.frameLength) frames)")
+            }
             let outCapacity = AVAudioFrameCount(Double(buf.frameLength) * self.sampleRate / hwFmt.sampleRate)
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: outCapacity) else { return }
             var err: NSError?
@@ -134,6 +183,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 }
             }
             self.send(["type": "input_audio_buffer.append", "audio": pcm.base64EncodedString()])
+            self.bytesAppendedThisTurn += pcm.count
         }
 
         try engine.start()
@@ -227,7 +277,12 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         case "response.done":
             isAssistantResponding = false
+            pendingStartContinuation?.resume()
+            pendingStartContinuation = nil
             Task { @MainActor in self.voiceState = .idle }
+
+        case "session.updated":
+            print("[Config] session.update ACCEPTED")
 
         case "error":
             if let e = json["error"] as? [String: Any], let msg = e["message"] as? String {
@@ -266,7 +321,12 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Session configuration
 
     private func configureSession() {
+        transcriptBuffer = ""
+        Task { @MainActor in self.liveCaption = "" }
+
         let instructions = """
+        CRITICAL: Every single response you give MUST start with a call to the draw_on_whiteboard tool. Sketch something relevant to what you're saying, even if small. If you cannot think of anything to draw, sketch a circle with a label. You MUST call the tool — no exceptions.
+
         You are Hoot — a warm, encouraging AI tutor. You help students one-on-one via voice.
 
         LANGUAGE: Reply in English only, always. Never Spanish, French, or any other language.
@@ -278,31 +338,29 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Coordinates for drawing: canvas is 900 wide × 600 tall, (0,0) at top-left. Use x in 50-850 range, y in 50-550 range. Text size 20-40pt.
         """
 
-        print("[Config] sending session.update with model=gpt-realtime, voice=sage")
+        print("[Config] sending session.update (flat schema), voice=marin")
         print("[Config] instructions length=\(instructions.count)")
 
         send([
             "type": "session.update",
             "session": [
-                "modalities": ["text", "audio"],
+                "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "sage",
-                "temperature": 0.85,
+                "voice": "marin",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": NSNull(),
-                "max_response_output_tokens": 200,
+                "temperature": NSNumber(value: 0.8),
                 "tools": [drawToolSchema()],
-                "tool_choice": "auto"
+                "tool_choice": ["type": "function", "name": "draw_on_whiteboard"] as [String: Any]
             ] as [String: Any]
         ])
 
         send([
             "type": "response.create",
             "response": [
-                "modalities": ["text", "audio"],
-                "instructions": "Greet the student warmly in one short English sentence. Ask what they'd like to learn today. English only."
+                "instructions": "Greet the student warmly in ONE short sentence IN ENGLISH. Ask what they'd like to learn today. English only."
             ] as [String: Any]
         ])
     }
