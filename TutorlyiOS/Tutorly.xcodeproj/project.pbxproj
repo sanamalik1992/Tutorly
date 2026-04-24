@@ -1,0 +1,341 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000010 /* TutorlyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001 /* TutorlyApp.swift */; };
+		A1000011 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002 /* ContentView.swift */; };
+		A1000012 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000003 /* Theme.swift */; };
+		A1000013 /* TutorSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000004 /* TutorSession.swift */; };
+		A1000014 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000005 /* Models.swift */; };
+		A1000018 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000009 /* Keychain.swift */; };
+		A1000019 /* RealtimeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100001D /* RealtimeSession.swift */; };
+		A100001A /* Whiteboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000A /* Whiteboard.swift */; };
+		A100001B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A100000B /* Assets.xcassets */; };
+		A100001C /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A100000C /* Preview Assets.xcassets */; };
+		A1000081 /* VoiceOrb.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000080 /* VoiceOrb.swift */; };
+		A1000083 /* TopNav.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000082 /* TopNav.swift */; };
+		A1000085 /* VoiceDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000084 /* VoiceDock.swift */; };
+		A1000087 /* LiveCaption.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000086 /* LiveCaption.swift */; };
+		A1000089 /* SettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000088 /* SettingsSheet.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1000000 /* Tutorly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tutorly.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000001 /* TutorlyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorlyApp.swift; sourceTree = "<group>"; };
+		A1000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A1000003 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		A1000004 /* TutorSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorSession.swift; sourceTree = "<group>"; };
+		A1000005 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A1000009 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		A100001D /* RealtimeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSession.swift; sourceTree = "<group>"; };
+		A100000A /* Whiteboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Whiteboard.swift; sourceTree = "<group>"; };
+		A100000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A100000C /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		A100000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000080 /* VoiceOrb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceOrb.swift; sourceTree = "<group>"; };
+		A1000082 /* TopNav.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopNav.swift; sourceTree = "<group>"; };
+		A1000084 /* VoiceDock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceDock.swift; sourceTree = "<group>"; };
+		A1000086 /* LiveCaption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCaption.swift; sourceTree = "<group>"; };
+		A1000088 /* SettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSheet.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1000030 = {
+			isa = PBXGroup;
+			children = (
+				A1000031 /* Tutorly */,
+				A1000032 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1000031 /* Tutorly */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001 /* TutorlyApp.swift */,
+				A1000002 /* ContentView.swift */,
+				A1000003 /* Theme.swift */,
+				A1000004 /* TutorSession.swift */,
+				A1000033 /* Models */,
+				A1000034 /* Services */,
+				A1000035 /* Views */,
+				A100000B /* Assets.xcassets */,
+				A100000D /* Info.plist */,
+				A1000036 /* Preview Content */,
+			);
+			path = Tutorly;
+			sourceTree = "<group>";
+		};
+		A1000032 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1000000 /* Tutorly.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A1000033 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A1000005 /* Models.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A1000034 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A1000009 /* Keychain.swift */,
+				A100001D /* RealtimeSession.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A1000035 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A100000A /* Whiteboard.swift */,
+				A1000080 /* VoiceOrb.swift */,
+				A1000082 /* TopNav.swift */,
+				A1000084 /* VoiceDock.swift */,
+				A1000086 /* LiveCaption.swift */,
+				A1000088 /* SettingsSheet.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A1000036 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				A100000C /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1000040 /* Tutorly */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000050 /* Build configuration list for PBXNativeTarget "Tutorly" */;
+			buildPhases = (
+				A1000041 /* Sources */,
+				A1000020 /* Frameworks */,
+				A1000042 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Tutorly;
+			productName = Tutorly;
+			productReference = A1000000 /* Tutorly.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1000060 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A1000040 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A1000061 /* Build configuration list for PBXProject "Tutorly" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1000030;
+			productRefGroup = A1000032 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1000040 /* Tutorly */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1000042 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100001C /* Preview Assets.xcassets in Resources */,
+				A100001B /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1000041 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000010 /* TutorlyApp.swift in Sources */,
+				A1000011 /* ContentView.swift in Sources */,
+				A1000012 /* Theme.swift in Sources */,
+				A1000013 /* TutorSession.swift in Sources */,
+				A1000014 /* Models.swift in Sources */,
+				A1000018 /* Keychain.swift in Sources */,
+				A1000019 /* RealtimeSession.swift in Sources */,
+				A100001A /* Whiteboard.swift in Sources */,
+				A1000081 /* VoiceOrb.swift in Sources */,
+				A1000083 /* TopNav.swift in Sources */,
+				A1000085 /* VoiceDock.swift in Sources */,
+				A1000087 /* LiveCaption.swift in Sources */,
+				A1000089 /* SettingsSheet.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1000070 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1000071 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A1000072 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Tutorly/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tutorly.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A1000073 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Tutorly/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tutorly.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000050 /* Build configuration list for PBXNativeTarget "Tutorly" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000072 /* Debug */,
+				A1000073 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000061 /* Build configuration list for PBXProject "Tutorly" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000070 /* Debug */,
+				A1000071 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1000060 /* Project object */;
+}
