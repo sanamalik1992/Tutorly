@@ -23,6 +23,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var isTalking = false
     private var bytesAppendedThisTurn = 0
     private var isAssistantResponding = false
+    private var isCancellingResponse = false
+    private var hasPendingDrawFollowup = false
     private var pendingCallName: String?
     private var pendingCallId: String?
     private var transcriptBuffer = ""
@@ -75,21 +77,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func startTalking() {
         guard isConnected else { return }
         Task { @MainActor in
-            if isAssistantResponding {
-                player.stop()
-                send(["type": "response.cancel"])
-                // Wait up to 800ms for server to confirm cancellation via response.done
-                await withCheckedContinuation { cont in
-                    self.pendingStartContinuation = cont
-                    Task {
-                        try? await Task.sleep(nanoseconds: 800_000_000)
-                        if let c = self.pendingStartContinuation {
-                            self.pendingStartContinuation = nil
-                            c.resume()
-                        }
-                    }
-                }
-            }
             if !engine.isRunning {
                 print("[Audio] engine not running when startTalking called — restarting")
                 do { try engine.start() } catch {
@@ -98,9 +85,30 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                     return
                 }
             }
+            // Start recording immediately so the first words are never dropped
             bytesAppendedThisTurn = 0
             isTalking = true
             voiceState = .listening
+
+            if isAssistantResponding {
+                // Mute playback so server audio that arrives before cancel-ack is swallowed
+                isCancellingResponse = true
+                player.stop()
+                send(["type": "response.cancel"])
+                // Wait up to 600ms for response.done; force-clear state on timeout
+                await withCheckedContinuation { cont in
+                    self.pendingStartContinuation = cont
+                    Task {
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        if let c = self.pendingStartContinuation {
+                            self.pendingStartContinuation = nil
+                            c.resume()
+                        }
+                    }
+                }
+                isAssistantResponding = false
+                isCancellingResponse = false
+            }
             print("[Audio] push-to-talk START")
         }
     }
@@ -193,7 +201,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func scheduleAudio(_ pcm: Data) {
-        guard pcm.count >= 2 else { return }
+        guard pcm.count >= 2, !isCancellingResponse else { return }
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { return }
@@ -299,17 +307,33 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             responseTimeoutTask?.cancel()
             responseTimeoutTask = nil
             isAssistantResponding = false
+            isCancellingResponse = false
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
-            Task { @MainActor in self.voiceState = .idle }
+            if hasPendingDrawFollowup {
+                hasPendingDrawFollowup = false
+                send(["type": "response.create"])
+            } else {
+                Task { @MainActor in if !self.isTalking { self.voiceState = .idle } }
+            }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
+            if !isAssistantResponding {
+                send([
+                    "type": "response.create",
+                    "response": [
+                        "instructions": "Greet the student warmly in ONE short English sentence. Ask what they'd like to learn today."
+                    ] as [String: Any]
+                ])
+            }
 
         case "error":
             responseTimeoutTask?.cancel()
             responseTimeoutTask = nil
             isAssistantResponding = false
+            isCancellingResponse = false
+            hasPendingDrawFollowup = false
             if let e = json["error"] as? [String: Any] {
                 let code = e["code"] as? String ?? ""
                 let msg  = e["message"] as? String ?? "Unknown error"
@@ -344,7 +368,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                     "output": "{\"ok\":true}"
                 ] as [String: Any]
             ])
-            send(["type": "response.create"])
+            // response.create is sent in response.done handler once current response ends
+            hasPendingDrawFollowup = true
         } catch {
             print("[Draw] decode FAILED: \(error.localizedDescription)")
         }
@@ -388,12 +413,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             ] as [String: Any]
         ])
 
-        send([
-            "type": "response.create",
-            "response": [
-                "instructions": "Greet the student warmly in ONE short sentence IN ENGLISH. Ask what they'd like to learn today. English only."
-            ] as [String: Any]
-        ])
     }
 
     private func drawToolSchema() -> [String: Any] {
