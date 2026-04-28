@@ -354,6 +354,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
         ])
+    }
 
     // MARK: - URLSessionWebSocketDelegate
 
