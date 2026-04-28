@@ -42,3 +42,9 @@ enum CanvasSize {
     static let width: Double = 900
     static let height: Double = 600
 }
+
+struct TranscriptTurn: Identifiable {
+    let id = UUID()
+    let role: String
+    let text: String
+}

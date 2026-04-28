@@ -27,6 +27,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var pendingCallId: String?
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
+    @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored var completedTranscriptTurn: ((TranscriptTurn) -> Void)?
 
     // MARK: - Init
 
@@ -244,6 +246,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         case "response.created":
             isAssistantResponding = true
             transcriptBuffer = ""
+            responseTimeoutTask?.cancel()
+            responseTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.isAssistantResponding = false
+                    self.voiceState = .idle
+                    self.errorMessage = "Tutor took too long — try again"
+                }
+            }
             Task { @MainActor in self.voiceState = .speaking }
 
         case "response.audio.delta":
@@ -256,6 +268,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 transcriptBuffer += d
                 Task { @MainActor in self.liveCaption = self.transcriptBuffer }
             }
+
+        case "response.audio_transcript.done":
+            let finalText = (json["transcript"] as? String) ?? transcriptBuffer
+            if !finalText.isEmpty {
+                let turn = TranscriptTurn(role: "assistant", text: finalText)
+                completedTranscriptTurn?(turn)
+            }
+            Task { @MainActor in self.liveCaption = "" }
 
         case "response.audio.done":
             Task { @MainActor in self.voiceState = .idle }
@@ -276,6 +296,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             pendingCallName = nil; pendingCallId = nil
 
         case "response.done":
+            responseTimeoutTask?.cancel()
+            responseTimeoutTask = nil
             isAssistantResponding = false
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
@@ -285,10 +307,20 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             print("[Config] session.update ACCEPTED")
 
         case "error":
-            if let e = json["error"] as? [String: Any], let msg = e["message"] as? String {
-                print("[WS] ERROR: \(msg)")
-                Task { @MainActor in self.errorMessage = msg }
+            responseTimeoutTask?.cancel()
+            responseTimeoutTask = nil
+            isAssistantResponding = false
+            if let e = json["error"] as? [String: Any] {
+                let code = e["code"] as? String ?? ""
+                let msg  = e["message"] as? String ?? "Unknown error"
+                let short = String(msg.prefix(80)) + (msg.count > 80 ? "…" : "")
+                print("[WS] ERROR code=\(code): \(msg)")
+                let noise = ["input_audio_buffer_too_short", "buffer_too_small", "concurrent_response"]
+                if !noise.contains(code) {
+                    Task { @MainActor in self.errorMessage = short }
+                }
             }
+            Task { @MainActor in self.voiceState = .idle }
 
         default: break
         }
@@ -325,17 +357,15 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Task { @MainActor in self.liveCaption = "" }
 
         let instructions = """
-        CRITICAL: Every single response you give MUST start with a call to the draw_on_whiteboard tool. Sketch something relevant to what you're saying, even if small. If you cannot think of anything to draw, sketch a circle with a label. You MUST call the tool — no exceptions.
+        You are Hoot — a warm, encouraging AI tutor for one-on-one voice sessions.
 
-        You are Hoot — a warm, encouraging AI tutor. You help students one-on-one via voice.
+        LANGUAGE: English only. Every response, without exception, must be in English. Never use Spanish, French, or any other language regardless of what the student says.
 
-        LANGUAGE: Reply in English only, always. Never Spanish, French, or any other language.
+        STYLE: Short responses — one or two sentences maximum. Warm, casual, conversational. End with a quick checking question to invite the student to respond.
 
-        STYLE: Keep replies SHORT — one or two sentences. Warm, casual, conversational. Ask quick checking questions. Invite the student to respond.
+        WHITEBOARD: You have the draw_on_whiteboard tool. Call it whenever you explain any equation, formula, geometry, graph, diagram, or step-by-step working. Drawing is the core teaching method. Narrate what you are drawing as you draw it.
 
-        WHITEBOARD — NON-NEGOTIABLE: You have the draw_on_whiteboard tool. CALL IT for any maths, equation, geometry, diagram, graph, or visual concept. Calling the tool IS the teaching method — drawing is not optional. If a student asks about anything mathematical or visual, you MUST call draw_on_whiteboard at the start of your response. Narrate what you're drawing as you draw it.
-
-        Coordinates for drawing: canvas is 900 wide × 600 tall, (0,0) at top-left. Use x in 50-850 range, y in 50-550 range. Text size 20-40pt.
+        Coordinates: canvas is 900 × 600 (0,0 at top-left). Use x 50–850, y 50–550. Text size 20–40pt.
         """
 
         print("[Config] sending session.update (flat schema), voice=marin")
@@ -352,8 +382,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": NSNull(),
                 "temperature": NSNumber(value: 0.8),
+                "max_response_output_tokens": NSNumber(value: 200),
                 "tools": [drawToolSchema()],
-                "tool_choice": ["type": "function", "name": "draw_on_whiteboard"] as [String: Any]
+                "tool_choice": "auto"
             ] as [String: Any]
         ])
 

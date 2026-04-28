@@ -16,7 +16,7 @@ struct ContentView: View {
                 Whiteboard()
                     .padding(.horizontal, 16)
                 Spacer()
-                LiveCaption(text: session.realtime.liveCaption)
+                LiveCaption(liveText: session.realtime.liveCaption)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 12)
                 VoiceDock(
