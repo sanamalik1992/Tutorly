@@ -258,18 +258,18 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             }
             Task { @MainActor in self.voiceState = .speaking }
 
-        case "response.audio.delta":
+        case "response.audio.delta", "response.output_audio.delta":
             if let delta = json["delta"] as? String, let pcm = Data(base64Encoded: delta) {
                 scheduleAudio(pcm)
             }
 
-        case "response.audio_transcript.delta":
+        case "response.audio_transcript.delta", "response.output_audio_transcript.delta":
             if let d = json["delta"] as? String {
                 transcriptBuffer += d
                 Task { @MainActor in self.liveCaption = self.transcriptBuffer }
             }
 
-        case "response.audio_transcript.done":
+        case "response.audio_transcript.done", "response.output_audio_transcript.done":
             let finalText = (json["transcript"] as? String) ?? transcriptBuffer
             if !finalText.isEmpty {
                 let turn = TranscriptTurn(role: "assistant", text: finalText)
@@ -277,7 +277,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             }
             Task { @MainActor in self.liveCaption = "" }
 
-        case "response.audio.done":
+        case "response.audio.done", "response.output_audio.done":
             Task { @MainActor in self.voiceState = .idle }
 
         case "response.output_item.added":
@@ -363,9 +363,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         STYLE: Short responses — one or two sentences maximum. Warm, casual, conversational. End with a quick checking question to invite the student to respond.
 
-        WHITEBOARD: You have the draw_on_whiteboard tool. Call it whenever you explain any equation, formula, geometry, graph, diagram, or step-by-step working. Drawing is the core teaching method. Narrate what you are drawing as you draw it.
+        WHITEBOARD — REQUIRED FOR ANY MATH OR VISUAL CONTENT: You have the draw_on_whiteboard tool. You MUST call it on every response that involves numbers, equations, formulas, geometry, graphs, diagrams, or step-by-step working. Even a single labelled equation or simple sketch counts — call the tool. Do not just describe a drawing in words; actually call draw_on_whiteboard with concrete commands. Narrate aloud what you are drawing as you draw it. Only skip the tool for pure conversational greetings or yes/no answers with zero visual content.
 
-        Coordinates: canvas is 900 × 600 (0,0 at top-left). Use x 50–850, y 50–550. Text size 20–40pt.
+        Coordinates: canvas is 900 × 600 (0,0 at top-left). Use x 50–850, y 50–550. Text size 20–40pt. Use 2–6 commands per call.
         """
 
         print("[Config] sending session.update (flat schema), voice=marin")
@@ -382,7 +382,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": NSNull(),
                 "temperature": NSNumber(value: 0.8),
-                "max_response_output_tokens": NSNumber(value: 200),
+                "max_response_output_tokens": NSNumber(value: 500),
                 "tools": [drawToolSchema()],
                 "tool_choice": "auto"
             ] as [String: Any]
