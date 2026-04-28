@@ -8,8 +8,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var voiceState: VoiceState = .idle
     var liveCaption: String = ""
     var errorMessage: String?
-    var pendingDrawBlock: DrawBlock?
-    var drawTick: Int = 0
 
     // Private
     private var socket: URLSessionWebSocketTask?
@@ -24,9 +22,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var bytesAppendedThisTurn = 0
     private var isAssistantResponding = false
     private var isCancellingResponse = false
-    private var hasPendingDrawFollowup = false
-    private var pendingCallName: String?
-    private var pendingCallId: String?
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
@@ -288,21 +283,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         case "response.audio.done", "response.output_audio.done":
             Task { @MainActor in self.voiceState = .idle }
 
-        case "response.output_item.added":
-            if let item = json["item"] as? [String: Any],
-               (item["type"] as? String) == "function_call" {
-                pendingCallName = item["name"] as? String
-                pendingCallId   = item["call_id"] as? String
-            }
-
-        case "response.function_call_arguments.done":
-            let name   = (json["name"]    as? String) ?? pendingCallName ?? ""
-            let callId = (json["call_id"] as? String) ?? pendingCallId   ?? ""
-            let args   = (json["arguments"] as? String) ?? ""
-            print("[Draw] function_call.done — name=\(name), argsLen=\(args.count), preview=\(String(args.prefix(200)))")
-            if name == "draw_on_whiteboard" { handleDraw(args: args, callId: callId) }
-            pendingCallName = nil; pendingCallId = nil
-
         case "response.done":
             responseTimeoutTask?.cancel()
             responseTimeoutTask = nil
@@ -310,12 +290,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             isCancellingResponse = false
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
-            if hasPendingDrawFollowup {
-                hasPendingDrawFollowup = false
-                send(["type": "response.create"])
-            } else {
-                Task { @MainActor in if !self.isTalking { self.voiceState = .idle } }
-            }
+            Task { @MainActor in if !self.isTalking { self.voiceState = .idle } }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
@@ -333,7 +308,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             responseTimeoutTask = nil
             isAssistantResponding = false
             isCancellingResponse = false
-            hasPendingDrawFollowup = false
             if let e = json["error"] as? [String: Any] {
                 let code = e["code"] as? String ?? ""
                 let msg  = e["message"] as? String ?? "Unknown error"
@@ -350,31 +324,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    private func handleDraw(args: String, callId: String) {
-        print("[Draw] handleDraw called, \(args.count) bytes")
-        guard let data = args.data(using: .utf8) else { return }
-        do {
-            let block = try JSONDecoder().decode(DrawBlock.self, from: data)
-            print("[Draw] decoded \(block.commands.count) commands")
-            Task { @MainActor in
-                self.pendingDrawBlock = block
-                self.drawTick &+= 1
-            }
-            send([
-                "type": "conversation.item.create",
-                "item": [
-                    "type": "function_call_output",
-                    "call_id": callId,
-                    "output": "{\"ok\":true}"
-                ] as [String: Any]
-            ])
-            // response.create is sent in response.done handler once current response ends
-            hasPendingDrawFollowup = true
-        } catch {
-            print("[Draw] decode FAILED: \(error.localizedDescription)")
-        }
-    }
-
     // MARK: - Session configuration
 
     private func configureSession() {
@@ -384,17 +333,12 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         let instructions = """
         You are Hoot — a warm, encouraging AI tutor for one-on-one voice sessions.
 
-        LANGUAGE: English only. Every response, without exception, must be in English. Never use Spanish, French, or any other language regardless of what the student says.
+        LANGUAGE: English only, always. Never switch to any other language regardless of what the student says.
 
-        STYLE: Short responses — one or two sentences maximum. Warm, casual, conversational. End with a quick checking question to invite the student to respond.
+        STYLE: Short responses — one or two sentences maximum. Warm, casual, conversational. End each response with a quick checking question to invite the student to reply.
 
-        WHITEBOARD — REQUIRED FOR ANY MATH OR VISUAL CONTENT: You have the draw_on_whiteboard tool. You MUST call it on every response that involves numbers, equations, formulas, geometry, graphs, diagrams, or step-by-step working. Even a single labelled equation or simple sketch counts — call the tool. Do not just describe a drawing in words; actually call draw_on_whiteboard with concrete commands. Narrate aloud what you are drawing as you draw it. Only skip the tool for pure conversational greetings or yes/no answers with zero visual content.
-
-        Coordinates: canvas is 900 × 600 (0,0 at top-left). Use x 50–850, y 50–550. Text size 20–40pt. Use 2–6 commands per call.
+        ROLE: You explain concepts clearly, ask questions to check understanding, and adjust your pace to the student. Keep the energy upbeat and encouraging.
         """
-
-        print("[Config] sending session.update (flat schema), voice=marin")
-        print("[Config] instructions length=\(instructions.count)")
 
         send([
             "type": "session.update",
@@ -407,49 +351,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": NSNull(),
                 "temperature": NSNumber(value: 0.8),
-                "max_response_output_tokens": NSNumber(value: 500),
-                "tools": [drawToolSchema()],
-                "tool_choice": "auto"
+                "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
         ])
-
-    }
-
-    private func drawToolSchema() -> [String: Any] {
-        [
-            "type": "function",
-            "name": "draw_on_whiteboard",
-            "description": "Draw on the shared whiteboard. Call this whenever explaining any mathematical concept, equation, geometry, graph, diagram, or step-by-step working. Calling is REQUIRED for visual/mathematical content — never describe a drawing in words instead of calling this tool.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "clear": ["type": "boolean", "description": "True to clear board first. Default false."],
-                    "commands": [
-                        "type": "array",
-                        "description": "Array of 2-8 drawing commands.",
-                        "items": [
-                            "type": "object",
-                            "properties": [
-                                "type":  ["type": "string", "enum": ["text", "line", "arrow", "circle", "rect"]],
-                                "x":     ["type": "number"], "y":  ["type": "number"],
-                                "x1":    ["type": "number"], "y1": ["type": "number"],
-                                "x2":    ["type": "number"], "y2": ["type": "number"],
-                                "cx":    ["type": "number"], "cy": ["type": "number"], "r": ["type": "number"],
-                                "w":     ["type": "number"], "h":  ["type": "number"],
-                                "text":  ["type": "string"],
-                                "size":  ["type": "number"],
-                                "color": ["type": "string", "description": "Hex color like #FF6B35"],
-                                "fill":  ["type": "boolean"],
-                                "width": ["type": "number"]
-                            ] as [String: Any],
-                            "required": ["type"]
-                        ] as [String: Any]
-                    ] as [String: Any]
-                ] as [String: Any],
-                "required": ["commands"]
-            ] as [String: Any]
-        ]
-    }
 
     // MARK: - URLSessionWebSocketDelegate
 

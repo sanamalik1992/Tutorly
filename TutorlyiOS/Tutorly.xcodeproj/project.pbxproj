@@ -23,6 +23,10 @@
 		A1000087 /* LiveCaption.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000086 /* LiveCaption.swift */; };
 		A1000089 /* SettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000088 /* SettingsSheet.swift */; };
 		A100008B /* WelcomeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008A /* WelcomeSheet.swift */; };
+		A100008D /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008C /* AuthService.swift */; };
+		A100008F /* ProService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008E /* ProService.swift */; };
+		A1000091 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000090 /* LoginView.swift */; };
+		A1000093 /* ProView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000092 /* ProView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +48,10 @@
 		A1000086 /* LiveCaption.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCaption.swift; sourceTree = "<group>"; };
 		A1000088 /* SettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSheet.swift; sourceTree = "<group>"; };
 		A100008A /* WelcomeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeSheet.swift; sourceTree = "<group>"; };
+		A100008C /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
+		A100008E /* ProService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProService.swift; sourceTree = "<group>"; };
+		A1000090 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		A1000092 /* ProView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +111,8 @@
 			children = (
 				A1000009 /* Keychain.swift */,
 				A100001D /* RealtimeSession.swift */,
+				A100008C /* AuthService.swift */,
+				A100008E /* ProService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -110,13 +120,13 @@
 		A1000035 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				A100000A /* Whiteboard.swift */,
 				A1000080 /* VoiceOrb.swift */,
 				A1000082 /* TopNav.swift */,
 				A1000084 /* VoiceDock.swift */,
 				A1000086 /* LiveCaption.swift */,
 				A1000088 /* SettingsSheet.swift */,
-				A100008A /* WelcomeSheet.swift */,
+				A1000090 /* LoginView.swift */,
+				A1000092 /* ProView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -206,13 +216,15 @@
 				A1000014 /* Models.swift in Sources */,
 				A1000018 /* Keychain.swift in Sources */,
 				A1000019 /* RealtimeSession.swift in Sources */,
-				A100001A /* Whiteboard.swift in Sources */,
 				A1000081 /* VoiceOrb.swift in Sources */,
 				A1000083 /* TopNav.swift in Sources */,
 				A1000085 /* VoiceDock.swift in Sources */,
 				A1000087 /* LiveCaption.swift in Sources */,
 				A1000089 /* SettingsSheet.swift in Sources */,
-				A100008B /* WelcomeSheet.swift in Sources */,
+				A100008D /* AuthService.swift in Sources */,
+				A100008F /* ProService.swift in Sources */,
+				A1000091 /* LoginView.swift in Sources */,
+				A1000093 /* ProView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -276,7 +288,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -300,7 +312,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

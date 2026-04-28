@@ -46,5 +46,16 @@
 	<string>Tutorly uses speech recognition to understand what you say.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tutorly</string>
+			</array>
+			<key>CFBundleURLName</key>
+			<string>com.tutorly.app</string>
+		</dict>
+	</array>
 </dict>
 </plist>
