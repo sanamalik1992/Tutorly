@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(TutorSession.self) private var session
     @State private var showSettings = false
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
 
     var body: some View {
         ZStack {
@@ -30,6 +31,13 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
+        .sheet(isPresented: Binding(
+            get: { !hasSeenWelcome },
+            set: { hasSeenWelcome = !$0 }
+        )) {
+            WelcomeSheet(onDismiss: { hasSeenWelcome = true })
+                .interactiveDismissDisabled()
+        }
         .alert("Error", isPresented: Binding(
             get: { session.realtime.errorMessage != nil },
             set: { if !$0 { session.realtime.errorMessage = nil } }
