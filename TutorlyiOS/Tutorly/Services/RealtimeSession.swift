@@ -149,8 +149,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     private func setupAudio() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true, options: [.notifyOthersOnDeactivation])
+        try? session.overrideOutputAudioPort(.speaker)
 
         do {
             try engine.inputNode.setVoiceProcessingEnabled(true)
@@ -209,7 +210,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func scheduleAudio(_ pcm: Data) {
-        guard pcm.count >= 2, !isCancellingResponse else { return }
+        guard pcm.count >= 2 else { return }
+        isCancellingResponse = false
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { return }
