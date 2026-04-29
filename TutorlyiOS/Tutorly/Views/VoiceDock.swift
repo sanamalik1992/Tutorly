@@ -7,32 +7,18 @@ struct VoiceDock: View {
     let onText: () -> Void
     let onSave: () -> Void
 
-    @GestureState private var isPressing = false
-
     var body: some View {
         HStack(spacing: 10) {
-            dockButton(icon: "pause.fill",      label: "pause",  action: onPause)
+            dockButton(
+                icon: session.realtime.isMuted ? "mic.slash.fill" : "mic.fill",
+                label: session.realtime.isMuted ? "unmute" : "mute",
+                action: { session.realtime.toggleMute() }
+            )
             dockButton(icon: "lightbulb.fill",  label: "hint",   action: onHint)
 
             VStack(spacing: 6) {
                 VoiceOrb(state: session.realtime.voiceState, size: 88)
-                    .scaleEffect(isPressing ? 1.05 : 1.0)
                     .frame(width: 110, height: 110)
-                    .contentShape(Circle())
-                    .gesture(
-                        LongPressGesture(minimumDuration: 0.0)
-                            .sequenced(before: DragGesture(minimumDistance: 0))
-                            .updating($isPressing) { value, state, _ in
-                                switch value {
-                                case .second(true, _): state = true
-                                default: state = false
-                                }
-                            }
-                    )
-                    .onChange(of: isPressing) { _, newVal in
-                        if newVal { session.realtime.startTalking() }
-                        else      { session.realtime.stopTalking()  }
-                    }
 
                 Text(statusLabel)
                     .font(.ui(10, weight: .semibold))
@@ -54,10 +40,11 @@ struct VoiceDock: View {
     }
 
     private var statusLabel: String {
+        if session.realtime.isMuted { return "MUTED" }
         switch session.realtime.voiceState {
         case .speaking:  return "HOOT IS SPEAKING"
         case .listening: return "LISTENING…"
-        case .idle:      return session.realtime.isConnected ? "HOLD ORB TO TALK" : "NOT CONNECTED"
+        case .idle:      return session.realtime.isConnected ? "JUST SPEAK" : "CONNECTING…"
         }
     }
 

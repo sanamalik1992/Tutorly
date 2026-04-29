@@ -22,9 +22,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var isEngineGraphBuilt = false
     private let sampleRate: Double = 24_000
 
-    private var isTalking = false
-    private var bytesAppendedThisTurn = 0
     private var isAssistantResponding = false
+    private var hasConfiguredSession = false
+    private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
@@ -67,7 +67,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func toggleMute() {
         isMuted.toggle()
         if isMuted {
-            isTalking = false
             voiceState = .idle
         }
     }
@@ -78,70 +77,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         if engine.isRunning { engine.stop() }
         isConnected = false
         voiceState = .idle
+        hasConfiguredSession = false
+        hasSentGreeting = false
     }
 
-    func startTalking() {
-        guard isConnected, !isMuted else { return }
-        Task { @MainActor in
-            if !engine.isRunning {
-                print("[Audio] engine not running when startTalking called — restarting")
-                do { try engine.start() } catch {
-                    print("[Audio] engine restart FAILED: \(error)")
-                    self.errorMessage = "Mic not ready — try again"
-                    return
-                }
-            }
-            // Start recording immediately so the first words are never dropped
-            bytesAppendedThisTurn = 0
-            isTalking = true
-            voiceState = .listening
-
-            if isAssistantResponding {
-                // Mute playback so server audio that arrives before cancel-ack is swallowed
-                isCancellingResponse = true
-                player.stop()
-                send(["type": "response.cancel"])
-                // Wait up to 600ms for response.done; force-clear state on timeout
-                await withCheckedContinuation { cont in
-                    self.pendingStartContinuation = cont
-                    Task {
-                        try? await Task.sleep(nanoseconds: 600_000_000)
-                        if let c = self.pendingStartContinuation {
-                            self.pendingStartContinuation = nil
-                            c.resume()
-                        }
-                    }
-                }
-                isAssistantResponding = false
-                isCancellingResponse = false
-            }
-            print("[Audio] push-to-talk START")
-        }
-    }
-
-    func stopTalking() {
-        guard isTalking else { return }
-        isTalking = false
-        voiceState = .idle
-        print("[Audio] STOP called — bytesAppendedThisTurn=\(bytesAppendedThisTurn), isTalking=\(isTalking)")
-        let minBytes: Double = 24000 * 2 * 0.15  // 150ms at 24kHz PCM16 mono
-        if Double(bytesAppendedThisTurn) < minBytes {
-            print("[Audio] STOP — only \(bytesAppendedThisTurn) bytes captured, aborting (hold longer)")
-            send(["type": "input_audio_buffer.clear"])
-            Task { @MainActor in
-                self.errorMessage = "Hold the orb a bit longer while speaking"
-            }
-            return
-        }
-        guard !isAssistantResponding else {
-            print("[Audio] STOP — assistant still responding, skipping response.create")
-            send(["type": "input_audio_buffer.commit"])
-            return
-        }
-        print("[Audio] STOP — committing \(bytesAppendedThisTurn) bytes")
-        send(["type": "input_audio_buffer.commit"])
-        send(["type": "response.create"])
-    }
 
     // MARK: - Audio setup
 
@@ -179,7 +118,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
-            guard let self, self.isTalking, let conv = self.converter else { return }
+            guard let self, self.isConnected, !self.isMuted, let conv = self.converter else { return }
             if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
                 print("[Audio] mic buffer flowing (\(buf.frameLength) frames)")
             }
@@ -199,7 +138,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 }
             }
             self.send(["type": "input_audio_buffer.append", "audio": pcm.base64EncodedString()])
-            self.bytesAppendedThisTurn += pcm.count
         }
 
         try engine.start()
@@ -263,7 +201,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         switch type {
         case "session.created":
             Task { @MainActor in self.isConnected = true }
-            configureSession()
+            if !hasConfiguredSession {
+                configureSession()
+                hasConfiguredSession = true
+            }
 
         case "response.created":
             isAssistantResponding = true
@@ -309,18 +250,25 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             isCancellingResponse = false
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
-            Task { @MainActor in self.isThinking = false; if !self.isTalking { self.voiceState = .idle } }
+            Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
-            if !isAssistantResponding {
+            if !hasSentGreeting {
+                hasSentGreeting = true
                 send([
                     "type": "response.create",
                     "response": [
-                        "instructions": "Greet the student warmly in ONE short English sentence. Ask what they'd like to learn today."
+                        "instructions": "Greet the student warmly in ONE short English sentence. Ask what they'd like to learn today. English only."
                     ] as [String: Any]
                 ])
             }
+
+        case "input_audio_buffer.speech_started":
+            Task { @MainActor in self.voiceState = .listening }
+
+        case "input_audio_buffer.speech_stopped":
+            Task { @MainActor in self.voiceState = .idle }
 
         case "error":
             responseTimeoutTask?.cancel()
@@ -332,6 +280,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 let msg  = e["message"] as? String ?? "Unknown error"
                 let short = String(msg.prefix(80)) + (msg.count > 80 ? "…" : "")
                 print("[WS] ERROR code=\(code): \(msg)")
+                switch code {
+                case "input_audio_buffer_commit_empty",
+                     "input_audio_buffer_too_small",
+                     "conversation_already_has_active_response",
+                     "session_not_connected":
+                    print("[WS] swallowed noise error: \(code)")
+                    return
+                default:
+                    break
+                }
                 let noise = ["input_audio_buffer_too_short", "buffer_too_small", "concurrent_response"]
                 if !noise.contains(code) {
                     Task { @MainActor in self.errorMessage = short }
@@ -350,14 +308,18 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Task { @MainActor in self.liveCaption = "" }
 
         let instructions = """
-        You are Hoot — a warm, encouraging AI tutor for one-on-one voice sessions.
+You are Hoot, an AI voice tutor.
 
-        LANGUAGE: English only, always. Never switch to any other language regardless of what the student says.
+LANGUAGE: You MUST respond in English ONLY. Every word, every reply, every greeting — English only. Never Spanish, never any other language. If the student speaks another language, you still reply in English. This rule overrides everything else.
 
-        STYLE: Short responses — one or two sentences maximum. Warm, casual, conversational. End each response with a quick checking question to invite the student to reply.
+PERSONALITY: Warm, encouraging, conversational. A friendly university teaching assistant.
 
-        ROLE: You explain concepts clearly, ask questions to check understanding, and adjust your pace to the student. Keep the energy upbeat and encouraging.
-        """
+STYLE: Keep replies SHORT — one or two sentences. Long replies break the conversation flow. After each short reply, ask a follow-up question to keep the dialogue going.
+
+CAPABILITIES: You can hear the student's voice and reply with voice. You CANNOT see them, you have no camera, no video, no screen access. Never claim to see anything. If asked, explain you are voice-only.
+
+LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
+"""
 
         send([
             "type": "session.update",
@@ -368,7 +330,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
-                "turn_detection": NSNull(),
+                "turn_detection": [
+                    "type": "server_vad",
+                    "threshold": NSNumber(value: 0.5),
+                    "prefix_padding_ms": NSNumber(value: 300),
+                    "silence_duration_ms": NSNumber(value: 600),
+                    "create_response": true,
+                    "interrupt_response": true
+                ] as [String: Any],
                 "temperature": NSNumber(value: 0.8),
                 "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
@@ -385,6 +354,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         print("[WS] closed code=\(closeCode.rawValue)")
+        hasConfiguredSession = false
+        hasSentGreeting = false
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
     }
 }
