@@ -8,6 +8,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var voiceState: VoiceState = .idle
     var liveCaption: String = ""
     var errorMessage: String?
+    var isThinking = false
+    var isMuted = false
+    var drawTick = 0
+    var pendingDrawBlock: DrawBlock?
 
     // Private
     private var socket: URLSessionWebSocketTask?
@@ -37,28 +41,35 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
-        guard let key = Keychain.read("openai"), !key.isEmpty else {
-            await MainActor.run { errorMessage = "Add your OpenAI API key in Settings." }
-            return
-        }
+        guard let key = Keychain.read("openai"), !key.isEmpty else { return }
 
-        let micOK = await AVAudioApplication.requestRecordPermission()
-        guard micOK else {
-            await MainActor.run { errorMessage = "Microphone access denied." }
-            return
-        }
+        do {
+            guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else { throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"]) }
+            let status = AVAudioSession.sharedInstance().recordPermission
+            if status == .denied { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
+            let micOK = status == .granted ? true : await requestMicPermission()
+            guard micOK else { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
 
-        do { try setupAudio() } catch {
-            await MainActor.run { errorMessage = "Audio setup failed: \(error.localizedDescription)" }
-            return
-        }
+            try setupAudio()
 
-        var req = URLRequest(url: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime")!)
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
-        socket = urlSession.webSocketTask(with: req)
-        socket?.resume()
-        receive()
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+            print("[WS] connect -> \(req.url?.absoluteString ?? "nil") auth=Bearer ***")
+            socket = urlSession.webSocketTask(with: req)
+            socket?.resume()
+            receive()
+        } catch {
+            await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
+        }
+    }
+
+    func toggleMute() {
+        isMuted.toggle()
+        if isMuted {
+            isTalking = false
+            voiceState = .idle
+        }
     }
 
     func disconnect() {
@@ -70,7 +81,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func startTalking() {
-        guard isConnected else { return }
+        guard isConnected, !isMuted else { return }
         Task { @MainActor in
             if !engine.isRunning {
                 print("[Audio] engine not running when startTalking called — restarting")
@@ -210,6 +221,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         if !player.isPlaying { player.play() }
     }
 
+    private func requestMicPermission() async -> Bool {
+        await withCheckedContinuation { cont in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                cont.resume(returning: granted)
+            }
+        }
+    }
+
     // MARK: - WebSocket
 
     private func receive() {
@@ -259,7 +278,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                     self.errorMessage = "Tutor took too long — try again"
                 }
             }
-            Task { @MainActor in self.voiceState = .speaking }
+            Task { @MainActor in self.voiceState = .speaking; self.isThinking = true }
 
         case "response.audio.delta", "response.output_audio.delta":
             if let delta = json["delta"] as? String, let pcm = Data(base64Encoded: delta) {
@@ -281,7 +300,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             Task { @MainActor in self.liveCaption = "" }
 
         case "response.audio.done", "response.output_audio.done":
-            Task { @MainActor in self.voiceState = .idle }
+            Task { @MainActor in self.voiceState = .idle; self.isThinking = false }
 
         case "response.done":
             responseTimeoutTask?.cancel()
@@ -290,7 +309,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             isCancellingResponse = false
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
-            Task { @MainActor in if !self.isTalking { self.voiceState = .idle } }
+            Task { @MainActor in self.isThinking = false; if !self.isTalking { self.voiceState = .idle } }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
@@ -318,7 +337,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                     Task { @MainActor in self.errorMessage = short }
                 }
             }
-            Task { @MainActor in self.voiceState = .idle }
+            Task { @MainActor in self.voiceState = .idle; self.isThinking = false }
 
         default: break
         }
