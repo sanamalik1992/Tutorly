@@ -7,6 +7,7 @@ struct VoiceOrb: View {
     @State private var breathe: CGFloat = 1.0
     @State private var barHeights: [CGFloat] = [12, 20, 8]
     @State private var wavePhase: CGFloat = 0
+    @State private var listeningPulse: CGFloat = 1.0
 
     var body: some View {
         ZStack {
@@ -56,6 +57,23 @@ struct VoiceOrb: View {
                 case .idle:
                     Circle().fill(Color.white.opacity(0.9)).frame(width: 6, height: 6)
                 }
+            }
+
+            // Animated listening ring
+            if state == .listening {
+                Circle()
+                    .stroke(Theme.accent.opacity(0.6), lineWidth: 3)
+                    .frame(width: size * 1.15, height: size * 1.15)
+                    .scaleEffect(listeningPulse)
+                    .opacity(2 - listeningPulse)
+                    .onAppear {
+                        withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
+                            listeningPulse = 1.4
+                        }
+                    }
+                    .onDisappear {
+                        listeningPulse = 1.0
+                    }
             }
         }
         .frame(width: size, height: size)
