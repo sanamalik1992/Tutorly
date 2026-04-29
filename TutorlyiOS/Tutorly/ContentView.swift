@@ -91,7 +91,7 @@ struct ContentView: View {
 
     private var whiteboardCard: some View {
         ZStack {
-            Whiteboard().clipShape(RoundedRectangle(cornerRadius: 14))
+            TutorWhiteboardCanvas().clipShape(RoundedRectangle(cornerRadius: 14))
             TimelineView(.animation) { context in
                 let angle = Angle.degrees((context.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 360))
                 RoundedRectangle(cornerRadius: 14)
@@ -152,3 +152,29 @@ struct ContentView: View {
 }
 
 private extension ContentView { enum LearnMode: String, CaseIterable { case teach = "Teach me", quiz = "Quiz me" } }
+
+private struct TutorWhiteboardCanvas: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06))
+            Canvas { ctx, size in
+                let spacing: CGFloat = 18
+                let dot = Color.white.opacity(0.12)
+                var y: CGFloat = 8
+                while y < size.height {
+                    var x: CGFloat = 8
+                    while x < size.width {
+                        ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.4, height: 1.4)), with: .color(dot))
+                        x += spacing
+                    }
+                    y += spacing
+                }
+                var margin = Path()
+                margin.move(to: CGPoint(x: 24, y: 0))
+                margin.addLine(to: CGPoint(x: 24, y: size.height))
+                ctx.stroke(margin, with: .color(Color.red.opacity(0.25)), lineWidth: 1)
+            }
+            .padding(10)
+        }
+    }
+}

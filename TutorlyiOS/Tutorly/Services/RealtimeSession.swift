@@ -45,7 +45,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         do {
             guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else { throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"]) }
-            let status = AVAudioSession.sharedInstance().recordPermission
+            let status = currentRecordPermission()
             if status == .denied { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
             let micOK = status == .granted ? true : await requestMicPermission()
             guard micOK else { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
@@ -225,10 +225,28 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     private func requestMicPermission() async -> Bool {
         await withCheckedContinuation { cont in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                cont.resume(returning: granted)
+            if #available(iOS 17.0, *) {
+                AVAudioApplication.requestRecordPermission { granted in
+                    cont.resume(returning: granted)
+                }
+            } else {
+                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                    cont.resume(returning: granted)
+                }
             }
         }
+    }
+
+    private func currentRecordPermission() -> AVAudioSession.RecordPermission {
+        if #available(iOS 17.0, *) {
+            let p = AVAudioApplication.shared.recordPermission
+            switch p {
+            case .granted: return .granted
+            case .denied: return .denied
+            default: return .undetermined
+            }
+        }
+        return AVAudioSession.sharedInstance().recordPermission
     }
 
     // MARK: - WebSocket
