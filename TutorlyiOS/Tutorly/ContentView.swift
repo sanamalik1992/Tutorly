@@ -2,189 +2,153 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(TutorSession.self) private var session
-    @State private var auth = AuthService.shared
     @State private var showSettings = false
-    @State private var showPro = false
-    @GestureState private var isPressing = false
+    @State private var showTypeInput = false
+    @State private var typedPrompt = ""
+    @State private var mode: LearnMode = .teach
+    @State private var subject = ""
+    @FocusState private var isSubjectFocused: Bool
+    @State private var toast: String?
+
+    private let suggestions = ["Algebra", "Calculus", "Biology", "Chemistry", "History"]
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                // Nav bar
-                HStack {
-                    Button(action: {
-                        session.disconnect()
-                        auth.signOut()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("End")
-                                .font(.system(size: 15, weight: .medium))
-                        }
-                        .foregroundStyle(Theme.inkSoft)
-                    }
-
-                    Spacer()
-
-                    HStack(spacing: 12) {
-                        if !ProService.shared.isPro {
-                            Button(action: { showPro = true }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "sparkles")
-                                    Text("Pro")
-                                }
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Theme.accent)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Theme.accentSoft)
-                                .clipShape(Capsule())
-                            }
-                        }
-
-                        Button(action: { showSettings = true }) {
-                            Image(systemName: "gear")
-                                .font(.system(size: 18))
-                                .foregroundStyle(Theme.inkSoft)
-                        }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-                Spacer()
-
-                // Central orb
-                VStack(spacing: 14) {
-                    VoiceOrb(state: session.realtime.voiceState, size: 140)
-                        .scaleEffect(isPressing ? 1.06 : 1.0)
-                        .frame(width: 170, height: 170)
-                        .contentShape(Circle())
-                        .gesture(
-                            LongPressGesture(minimumDuration: 0.0)
-                                .sequenced(before: DragGesture(minimumDistance: 0))
-                                .updating($isPressing) { value, state, _ in
-                                    switch value {
-                                    case .second(true, _): state = true
-                                    default: state = false
-                                    }
-                                }
-                        )
-                        .onChange(of: isPressing) { _, newVal in
-                            if newVal { session.realtime.startTalking() }
-                            else      { session.realtime.stopTalking()  }
-                        }
-
-                    Text(statusLabel)
-                        .font(.system(size: 12, weight: .semibold))
-                        .tracking(0.8)
-                        .foregroundStyle(Theme.inkMuted)
-                        .textCase(.uppercase)
-                        .animation(.easeInOut(duration: 0.2), value: statusLabel)
-                }
-
-                Spacer()
-
-                // Transcript
-                transcriptArea
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
-
-                // Bottom action row
-                HStack(spacing: 20) {
-                    actionButton(icon: "lightbulb", label: "Hint", action: {})
-                    Spacer()
-                    actionButton(icon: "bookmark", label: "Save", action: {})
-                }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 32)
+            VStack(spacing: 12) {
+                headerCard
+                modeSubjectCard
+                toolsCard
+                whiteboardCard
+                voiceBarCard
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
+
+            if let toast { toastView(toast) }
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
-        .sheet(isPresented: $showPro) { ProView() }
-        .alert("Error", isPresented: Binding(
-            get: { session.realtime.errorMessage != nil },
-            set: { if !$0 { session.realtime.errorMessage = nil } }
-        )) {
-            Button("OK") { session.realtime.errorMessage = nil }
-        } message: {
-            Text(session.realtime.errorMessage ?? "")
+        .onChange(of: session.realtime.errorMessage) { _, newValue in
+            guard let newValue else { return }
+            withAnimation { toast = newValue }
+            session.realtime.errorMessage = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { withAnimation { toast = nil } }
         }
-        .task {
-            if Keychain.read("openai") != nil, !session.realtime.isConnected {
-                session.connect()
-            } else if Keychain.read("openai") == nil {
-                showSettings = true
+    }
+
+    private var headerCard: some View {
+        cardBase(height: 60) {
+            HStack {
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(LinearGradient(colors: [.blue, .teal], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 36, height: 36)
+                        .overlay(Text("T").bold().foregroundStyle(.white))
+                    Text("Tutor") + Text("ly").italic().foregroundStyle(.blue) + Text("•").foregroundStyle(.orange)
+                }.font(.system(size: 22, weight: .bold, design: .rounded))
+                Spacer()
+                HStack(spacing: 8) {
+                    Image(systemName: "text.alignleft")
+                    Button(action: { showSettings = true }) { Image(systemName: "gear") }
+                }
+                .font(.system(size: 19, weight: .semibold))
+                .frame(height: 36)
             }
         }
     }
 
-    private var statusLabel: String {
-        switch session.realtime.voiceState {
-        case .speaking:  return "Hoot is speaking"
-        case .listening: return "Listening…"
-        case .idle:      return session.realtime.isConnected ? "Hold orb to talk" : "Not connected"
-        }
-    }
-
-    private var transcriptArea: some View {
-        ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(session.transcriptTurns) { turn in
-                        Text(turn.text)
-                            .font(.system(size: 14))
-                            .foregroundStyle(Theme.inkMuted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .multilineTextAlignment(.leading)
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 12)
-                            .background(Theme.bgElev)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    if !session.realtime.liveCaption.isEmpty {
-                        Text(session.realtime.liveCaption)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(Theme.ink)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .multilineTextAlignment(.leading)
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 12)
-                            .background(Theme.accentSoft)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .id("live")
-                    }
-                    if session.transcriptTurns.isEmpty && session.realtime.liveCaption.isEmpty {
-                        Text(session.realtime.isConnected ? "Hoot is ready — hold the orb and ask anything." : "Connecting…")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Theme.inkMuted)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .multilineTextAlignment(.center)
-                            .padding(.top, 8)
+    private var modeSubjectCard: some View {
+        cardBase {
+            VStack(spacing: 10) {
+                Picker("Mode", selection: $mode) {
+                    ForEach(LearnMode.allCases, id: \.self) { Text($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                TextField("What are we learning today?", text: $subject)
+                    .focused($isSubjectFocused)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 12).frame(height: 44)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
+                    .overlay(alignment: .leading) { Image(systemName: "book").padding(.leading, 8).opacity(0.6) }
+                    .padding(.leading, 24)
+                if isSubjectFocused && subject.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack { ForEach(suggestions, id: \.self) { s in Button(s) { subject = s } } }
                     }
                 }
             }
-            .frame(maxHeight: 220)
-            .onChange(of: session.realtime.liveCaption) { _, _ in
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("live", anchor: .bottom) }
+        }
+    }
+
+    private var toolsCard: some View {
+        cardBase {
+            HStack { ForEach(["black","blue","green","orange","red"], id: \.self) { c in Circle().fill(Color(c)).frame(width: 20, height: 20) }
+                Spacer(); Image(systemName: "pencil"); Image(systemName: "eraser"); Image(systemName: "trash") }
+            .font(.system(size: 16, weight: .semibold))
+        }
+    }
+
+    private var whiteboardCard: some View {
+        ZStack {
+            Whiteboard().clipShape(RoundedRectangle(cornerRadius: 14))
+            TimelineView(.animation) { context in
+                let angle = Angle.degrees((context.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 360))
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(AngularGradient(colors: [.blue,.teal,.orange,.blue], center: .center, angle: angle), lineWidth: session.realtime.isThinking ? 3 : 1.5)
+                    .opacity(session.realtime.isThinking ? 0.95 : 0.35)
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var voiceBarCard: some View {
+        cardBase(height: 80) {
+            HStack(spacing: 12) {
+                VStack(spacing: 2) {
+                    Text(statusLine).font(.system(size: 14, weight: .medium, design: .rounded)).lineLimit(1)
+                    Button(action: voiceButtonTap) { Circle().fill(buttonGradient).frame(width: 64, height: 64).overlay(Image(systemName: voiceIcon).foregroundStyle(.white)) }
+                    Text(session.realtime.isConnected ? (session.realtime.isMuted ? "MUTED" : "LIVE") : "CONNECT")
+                        .font(.system(size: 9, weight: .bold, design: .rounded).monospaced()).tracking(1.3)
+                }
+                Spacer()
+                if showTypeInput && !session.realtime.isConnected {
+                    TextField("Type instead", text: $typedPrompt).textFieldStyle(.roundedBorder)
+                } else if !session.realtime.isConnected {
+                    Button("type instead") { withAnimation { showTypeInput = true } }
+                }
             }
         }
     }
 
-    private func actionButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 20))
-                    .foregroundStyle(Theme.inkSoft)
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.inkMuted)
-            }
-        }
+    private func voiceButtonTap() {
+        if session.realtime.isConnected { session.realtime.toggleMute() }
+        else { session.connect() }
+    }
+
+    private var statusLine: String {
+        if !session.realtime.isConnected { return "Tap Connect to start" }
+        if session.realtime.isMuted { return "Muted" }
+        if session.realtime.voiceState == .speaking { return "Tutorly is speaking" }
+        if session.realtime.isThinking { return "Tutorly is thinking" }
+        return "Listening…"
+    }
+
+    private var voiceIcon: String { session.realtime.voiceState == .speaking ? "waveform" : (session.realtime.isConnected && !session.realtime.isMuted ? "mic" : "mic.slash") }
+    private var buttonGradient: LinearGradient {
+        if !session.realtime.isConnected { return .init(colors: [.blue,.teal], startPoint: .topLeading, endPoint: .bottomTrailing) }
+        if session.realtime.isMuted { return .init(colors: [.gray,.gray], startPoint: .topLeading, endPoint: .bottomTrailing) }
+        if session.realtime.voiceState == .speaking { return .init(colors: [.orange,.blue], startPoint: .topLeading, endPoint: .bottomTrailing) }
+        return .init(colors: [.teal,.orange], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    private func toastView(_ text: String) -> some View {
+        Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 8).background(.black.opacity(0.85), in: Capsule()).frame(maxHeight: .infinity, alignment: .top).padding(.top, 18)
+    }
+
+    private func cardBase<Content: View>(height: CGFloat? = nil, @ViewBuilder content: () -> Content) -> some View {
+        content().padding(16).frame(maxWidth: .infinity).frame(height: height).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14)).overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
     }
 }
+
+private extension ContentView { enum LearnMode: String, CaseIterable { case teach = "Teach me", quiz = "Quiz me" } }
