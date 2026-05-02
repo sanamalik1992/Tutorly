@@ -5,6 +5,7 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var apiKey = Keychain.read("openai") ?? ""
     @State private var saved = false
+    @State private var showProSheet = false
 
     var body: some View {
         NavigationStack {
@@ -40,6 +41,32 @@ struct SettingsSheet: View {
                     Link("Get a key at console.openai.com",
                          destination: URL(string: "https://platform.openai.com/api-keys")!)
                 }
+
+                Section("Subscription") {
+                    if ProService.shared.isPro {
+                        Label("Tutorly Pro — Active", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Button(action: { showProSheet = true }) {
+                            Label("Upgrade to Pro", systemImage: "sparkles")
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive, action: {
+                        session.disconnect()
+                        AuthService.shared.signOut()
+                        dismiss()
+                    }) {
+                        HStack {
+                            Spacer()
+                            Text("Sign Out")
+                            Spacer()
+                        }
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -49,5 +76,6 @@ struct SettingsSheet: View {
                 }
             }
         }
+        .sheet(isPresented: $showProSheet) { ProView() }
     }
 }

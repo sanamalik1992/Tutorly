@@ -1,23 +1,37 @@
 import SwiftUI
 
 struct LiveCaption: View {
-    let text: String
+    let liveText: String
+    @Environment(TutorSession.self) private var session
+
     var body: some View {
-        if !text.isEmpty {
-            Text("\u{201C}\(text)\u{201D}")
-                .font(.ui(13, weight: .medium))
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Theme.bg.opacity(0.85))
-                .clipShape(Capsule())
-                .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .offset(y: 6)),
-                    removal: .opacity
-                ))
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(session.transcriptTurns) { turn in
+                        Text(turn.text)
+                            .font(.ui(13, weight: .regular))
+                            .foregroundStyle(Theme.inkMuted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .multilineTextAlignment(.leading)
+                    }
+                    if !liveText.isEmpty {
+                        Text("\u{201C}\(liveText)")
+                            .font(.ui(13, weight: .medium))
+                            .foregroundStyle(Theme.ink)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .multilineTextAlignment(.leading)
+                            .id("live")
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+            .onChange(of: liveText) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("live", anchor: .bottom)
+                }
+            }
         }
+        .frame(maxHeight: 80)
     }
 }

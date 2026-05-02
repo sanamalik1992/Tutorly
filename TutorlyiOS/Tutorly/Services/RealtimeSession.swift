@@ -8,49 +8,77 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var voiceState: VoiceState = .idle
     var liveCaption: String = ""
     var errorMessage: String?
+    var isThinking = false
+    var isMuted = false
+    var drawTick = 0
     var pendingDrawBlock: DrawBlock?
-    var drawTick: Int = 0
 
     // Private
     private var socket: URLSessionWebSocketTask?
-    private lazy var urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    private var urlSession: URLSession!
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
     private var isEngineGraphBuilt = false
     private let sampleRate: Double = 24_000
 
-    private var isTalking = false
     private var isAssistantResponding = false
-    private var pendingCallName: String?
-    private var pendingCallId: String?
+    private var hasConfiguredSession = false
+    private var hasSentGreeting = false
+    private var isCancellingResponse = false
     private var transcriptBuffer = ""
+    @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
+    @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored var completedTranscriptTurn: ((TranscriptTurn) -> Void)?
+
+    // MARK: - Init
+
+    override init() {
+        super.init()
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+    }
 
     // MARK: - Public
 
     func connect() async {
-        guard let key = Keychain.read("openai"), !key.isEmpty else {
-            await MainActor.run { errorMessage = "Add your OpenAI API key in Settings." }
-            return
-        }
+        guard let key = Keychain.read("openai"), !key.isEmpty else { return }
 
-        let micOK = await AVAudioApplication.requestRecordPermission()
-        guard micOK else {
-            await MainActor.run { errorMessage = "Microphone access denied." }
-            return
-        }
+        do {
+            guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else { throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"]) }
+            let status: AVAudioSession.RecordPermission
+            if #available(iOS 17.0, *) {
+                switch AVAudioApplication.shared.recordPermission {
+                case .undetermined: status = .undetermined
+                case .denied: status = .denied
+                case .granted: status = .granted
+                @unknown default: status = .undetermined
+                }
+            } else {
+                status = AVAudioSession.sharedInstance().recordPermission
+            }
+            if status == .denied { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
+            let micOK = status == .granted ? true : await requestMicPermission()
+            guard micOK else { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
 
-        do { try setupAudio() } catch {
-            await MainActor.run { errorMessage = "Audio setup failed: \(error.localizedDescription)" }
-            return
-        }
+            try setupAudio()
 
-        var req = URLRequest(url: URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime")!)
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
-        socket = urlSession.webSocketTask(with: req)
-        socket?.resume()
-        receive()
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+            print("[WS] connect -> \(req.url?.absoluteString ?? "nil") auth=Bearer ***")
+            socket = urlSession.webSocketTask(with: req)
+            socket?.resume()
+            receive()
+        } catch {
+            await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
+        }
+    }
+
+    func toggleMute() {
+        isMuted.toggle()
+        if isMuted {
+            voiceState = .idle
+        }
     }
 
     func disconnect() {
@@ -59,33 +87,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         if engine.isRunning { engine.stop() }
         isConnected = false
         voiceState = .idle
+        hasConfiguredSession = false
+        hasSentGreeting = false
     }
 
-    func startTalking() {
-        guard isConnected else { return }
-        if isAssistantResponding {
-            player.stop()
-            send(["type": "response.cancel"])
-        }
-        isTalking = true
-        voiceState = .listening
-        print("[Audio] push-to-talk START")
-    }
-
-    func stopTalking() {
-        guard isTalking else { return }
-        isTalking = false
-        voiceState = .idle
-        print("[Audio] push-to-talk STOP — committing")
-        send(["type": "input_audio_buffer.commit"])
-        send(["type": "response.create"])
-    }
 
     // MARK: - Audio setup
 
     private func setupAudio() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothA2DP])
         try session.setActive(true, options: [.notifyOthersOnDeactivation])
 
         do {
@@ -117,7 +128,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
-            guard let self, self.isTalking, let conv = self.converter else { return }
+            guard let self, self.isConnected, !self.isMuted, let conv = self.converter else { return }
+            if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
+                print("[Audio] mic buffer flowing (\(buf.frameLength) frames)")
+            }
             let outCapacity = AVAudioFrameCount(Double(buf.frameLength) * self.sampleRate / hwFmt.sampleRate)
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: outCapacity) else { return }
             var err: NSError?
@@ -141,7 +155,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func scheduleAudio(_ pcm: Data) {
-        guard pcm.count >= 2 else { return }
+        guard pcm.count >= 2, !isCancellingResponse else { return }
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { return }
@@ -153,6 +167,20 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         }
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
+    }
+
+    private func requestMicPermission() async -> Bool {
+        await withCheckedContinuation { cont in
+            if #available(iOS 17.0, *) {
+                AVAudioApplication.requestRecordPermission { granted in
+                    cont.resume(returning: granted)
+                }
+            } else {
+                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                    cont.resume(returning: granted)
+                }
+            }
+        }
     }
 
     // MARK: - WebSocket
@@ -189,158 +217,147 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         switch type {
         case "session.created":
             Task { @MainActor in self.isConnected = true }
-            configureSession()
+            if !hasConfiguredSession {
+                configureSession()
+                hasConfiguredSession = true
+            }
 
         case "response.created":
             isAssistantResponding = true
             transcriptBuffer = ""
-            Task { @MainActor in self.voiceState = .speaking }
+            responseTimeoutTask?.cancel()
+            responseTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.isAssistantResponding = false
+                    self.voiceState = .idle
+                    self.errorMessage = "Tutor took too long — try again"
+                }
+            }
+            Task { @MainActor in self.voiceState = .speaking; self.isThinking = true }
 
-        case "response.audio.delta":
+        case "response.audio.delta", "response.output_audio.delta":
             if let delta = json["delta"] as? String, let pcm = Data(base64Encoded: delta) {
                 scheduleAudio(pcm)
             }
 
-        case "response.audio_transcript.delta":
+        case "response.audio_transcript.delta", "response.output_audio_transcript.delta":
             if let d = json["delta"] as? String {
                 transcriptBuffer += d
                 Task { @MainActor in self.liveCaption = self.transcriptBuffer }
             }
 
-        case "response.audio.done":
-            Task { @MainActor in self.voiceState = .idle }
-
-        case "response.output_item.added":
-            if let item = json["item"] as? [String: Any],
-               (item["type"] as? String) == "function_call" {
-                pendingCallName = item["name"] as? String
-                pendingCallId   = item["call_id"] as? String
+        case "response.audio_transcript.done", "response.output_audio_transcript.done":
+            let finalText = (json["transcript"] as? String) ?? transcriptBuffer
+            if !finalText.isEmpty {
+                let turn = TranscriptTurn(role: "assistant", text: finalText)
+                completedTranscriptTurn?(turn)
             }
+            Task { @MainActor in self.liveCaption = "" }
 
-        case "response.function_call_arguments.done":
-            let name   = (json["name"]    as? String) ?? pendingCallName ?? ""
-            let callId = (json["call_id"] as? String) ?? pendingCallId   ?? ""
-            let args   = (json["arguments"] as? String) ?? ""
-            print("[Draw] function_call.done — name=\(name), argsLen=\(args.count), preview=\(String(args.prefix(200)))")
-            if name == "draw_on_whiteboard" { handleDraw(args: args, callId: callId) }
-            pendingCallName = nil; pendingCallId = nil
+        case "response.audio.done", "response.output_audio.done":
+            Task { @MainActor in self.voiceState = .idle; self.isThinking = false }
 
         case "response.done":
+            responseTimeoutTask?.cancel()
+            responseTimeoutTask = nil
             isAssistantResponding = false
+            isCancellingResponse = false
+            pendingStartContinuation?.resume()
+            pendingStartContinuation = nil
+            Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
+
+        case "session.updated":
+            print("[Config] session.update ACCEPTED")
+            if !hasSentGreeting {
+                hasSentGreeting = true
+                send([
+                    "type": "response.create",
+                    "response": [
+                        "instructions": "Greet the student warmly in ONE short English sentence. Ask what they'd like to learn today. English only."
+                    ] as [String: Any]
+                ])
+            }
+
+        case "input_audio_buffer.speech_started":
+            Task { @MainActor in self.voiceState = .listening }
+
+        case "input_audio_buffer.speech_stopped":
             Task { @MainActor in self.voiceState = .idle }
 
         case "error":
-            if let e = json["error"] as? [String: Any], let msg = e["message"] as? String {
-                print("[WS] ERROR: \(msg)")
-                Task { @MainActor in self.errorMessage = msg }
+            responseTimeoutTask?.cancel()
+            responseTimeoutTask = nil
+            isAssistantResponding = false
+            isCancellingResponse = false
+            if let e = json["error"] as? [String: Any] {
+                let code = e["code"] as? String ?? ""
+                let msg  = e["message"] as? String ?? "Unknown error"
+                let short = String(msg.prefix(80)) + (msg.count > 80 ? "…" : "")
+                print("[WS] ERROR code=\(code): \(msg)")
+                switch code {
+                case "input_audio_buffer_commit_empty",
+                     "input_audio_buffer_too_small",
+                     "conversation_already_has_active_response",
+                     "session_not_connected":
+                    print("[WS] swallowed noise error: \(code)")
+                    return
+                default:
+                    break
+                }
+                let noise = ["input_audio_buffer_too_short", "buffer_too_small", "concurrent_response"]
+                if !noise.contains(code) {
+                    Task { @MainActor in self.errorMessage = short }
+                }
             }
+            Task { @MainActor in self.voiceState = .idle; self.isThinking = false }
 
         default: break
-        }
-    }
-
-    private func handleDraw(args: String, callId: String) {
-        print("[Draw] handleDraw called, \(args.count) bytes")
-        guard let data = args.data(using: .utf8) else { return }
-        do {
-            let block = try JSONDecoder().decode(DrawBlock.self, from: data)
-            print("[Draw] decoded \(block.commands.count) commands")
-            Task { @MainActor in
-                self.pendingDrawBlock = block
-                self.drawTick &+= 1
-            }
-            send([
-                "type": "conversation.item.create",
-                "item": [
-                    "type": "function_call_output",
-                    "call_id": callId,
-                    "output": "{\"ok\":true}"
-                ] as [String: Any]
-            ])
-            send(["type": "response.create"])
-        } catch {
-            print("[Draw] decode FAILED: \(error.localizedDescription)")
         }
     }
 
     // MARK: - Session configuration
 
     private func configureSession() {
+        transcriptBuffer = ""
+        Task { @MainActor in self.liveCaption = "" }
+
         let instructions = """
-        You are Hoot — a warm, encouraging AI tutor. You help students one-on-one via voice.
+You are Hoot, an AI voice tutor.
 
-        LANGUAGE: Reply in English only, always. Never Spanish, French, or any other language.
+LANGUAGE: You MUST respond in English ONLY. Every word, every reply, every greeting — English only. Never Spanish, never any other language. If the student speaks another language, you still reply in English. This rule overrides everything else.
 
-        STYLE: Keep replies SHORT — one or two sentences. Warm, casual, conversational. Ask quick checking questions. Invite the student to respond.
+PERSONALITY: Warm, encouraging, conversational. A friendly university teaching assistant.
 
-        WHITEBOARD — NON-NEGOTIABLE: You have the draw_on_whiteboard tool. CALL IT for any maths, equation, geometry, diagram, graph, or visual concept. Calling the tool IS the teaching method — drawing is not optional. If a student asks about anything mathematical or visual, you MUST call draw_on_whiteboard at the start of your response. Narrate what you're drawing as you draw it.
+STYLE: Keep replies SHORT — one or two sentences. Long replies break the conversation flow. After each short reply, ask a follow-up question to keep the dialogue going.
 
-        Coordinates for drawing: canvas is 900 wide × 600 tall, (0,0) at top-left. Use x in 50-850 range, y in 50-550 range. Text size 20-40pt.
-        """
+CAPABILITIES: You can hear the student's voice and reply with voice. You CANNOT see them, you have no camera, no video, no screen access. Never claim to see anything. If asked, explain you are voice-only.
 
-        print("[Config] sending session.update with model=gpt-realtime, voice=sage")
-        print("[Config] instructions length=\(instructions.count)")
+LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
+"""
 
         send([
             "type": "session.update",
             "session": [
-                "modalities": ["text", "audio"],
+                "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "sage",
-                "temperature": 0.85,
+                "voice": "marin",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
-                "turn_detection": NSNull(),
-                "max_response_output_tokens": 200,
-                "tools": [drawToolSchema()],
-                "tool_choice": "auto"
-            ] as [String: Any]
-        ])
-
-        send([
-            "type": "response.create",
-            "response": [
-                "modalities": ["text", "audio"],
-                "instructions": "Greet the student warmly in one short English sentence. Ask what they'd like to learn today. English only."
-            ] as [String: Any]
-        ])
-    }
-
-    private func drawToolSchema() -> [String: Any] {
-        [
-            "type": "function",
-            "name": "draw_on_whiteboard",
-            "description": "Draw on the shared whiteboard. Call this whenever explaining any mathematical concept, equation, geometry, graph, diagram, or step-by-step working. Calling is REQUIRED for visual/mathematical content — never describe a drawing in words instead of calling this tool.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "clear": ["type": "boolean", "description": "True to clear board first. Default false."],
-                    "commands": [
-                        "type": "array",
-                        "description": "Array of 2-8 drawing commands.",
-                        "items": [
-                            "type": "object",
-                            "properties": [
-                                "type":  ["type": "string", "enum": ["text", "line", "arrow", "circle", "rect"]],
-                                "x":     ["type": "number"], "y":  ["type": "number"],
-                                "x1":    ["type": "number"], "y1": ["type": "number"],
-                                "x2":    ["type": "number"], "y2": ["type": "number"],
-                                "cx":    ["type": "number"], "cy": ["type": "number"], "r": ["type": "number"],
-                                "w":     ["type": "number"], "h":  ["type": "number"],
-                                "text":  ["type": "string"],
-                                "size":  ["type": "number"],
-                                "color": ["type": "string", "description": "Hex color like #FF6B35"],
-                                "fill":  ["type": "boolean"],
-                                "width": ["type": "number"]
-                            ] as [String: Any],
-                            "required": ["type"]
-                        ] as [String: Any]
-                    ] as [String: Any]
+                "turn_detection": [
+                    "type": "server_vad",
+                    "threshold": NSNumber(value: 0.5),
+                    "prefix_padding_ms": NSNumber(value: 300),
+                    "silence_duration_ms": NSNumber(value: 600),
+                    "create_response": true,
+                    "interrupt_response": true
                 ] as [String: Any],
-                "required": ["commands"]
+                "temperature": NSNumber(value: 0.8),
+                "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
-        ]
+        ])
     }
 
     // MARK: - URLSessionWebSocketDelegate
@@ -353,6 +370,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         print("[WS] closed code=\(closeCode.rawValue)")
+        hasConfiguredSession = false
+        hasSentGreeting = false
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
     }
 }
