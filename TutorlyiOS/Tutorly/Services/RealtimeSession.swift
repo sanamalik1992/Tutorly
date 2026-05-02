@@ -76,8 +76,18 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     func toggleMute() {
         isMuted.toggle()
-        if isMuted {
-            voiceState = .idle
+        if isMuted { voiceState = .idle }
+    }
+
+    func cancelResponse() {
+        guard isAssistantResponding else { return }
+        isCancellingResponse = true
+        send(["type": "response.cancel"])
+        player.stop()
+        isAssistantResponding = false
+        Task { @MainActor in
+            self.voiceState = .idle
+            self.isThinking = false
         }
     }
 
@@ -131,7 +141,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
-            guard let self, self.isConnected, !self.isMuted, let conv = self.converter else { return }
+            // Gate mic sends while AI is speaking — prevents speaker echo being sent back to the server.
+            // The user can still interrupt by tapping the orb (sends response.cancel explicitly).
+            guard let self, self.isConnected, !self.isMuted, !self.isAssistantResponding,
+                  let conv = self.converter else { return }
             if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
                 print("[Audio] mic flowing \(buf.frameLength) frames")
             }
@@ -283,7 +296,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 send([
                     "type": "response.create",
                     "response": [
-                        "instructions": "Greet the student warmly in ONE short English sentence. Ask what they'd like to learn today. English only."
+                        "instructions": "Introduce yourself as Hoot, a friendly AI tutor. Say something like: 'Hi! I'm Hoot, your AI tutor. What would you like to learn today?' One or two sentences max. Speak naturally and warmly. English only."
                     ] as [String: Any]
                 ])
             }

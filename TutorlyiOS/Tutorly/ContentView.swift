@@ -53,6 +53,7 @@ struct ContentView: View {
 
             if let toast { toastView(toast) }
         }
+        .onAppear { session.autoConnectIfKeyAvailable() }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
         .sheet(isPresented: $showProSheet) { ProView() }
         .onChange(of: session.realtime.errorMessage) { _, newValue in
@@ -126,17 +127,21 @@ struct ContentView: View {
 
     private func orbTapped() {
         if session.realtime.isConnected {
-            session.realtime.toggleMute()
+            if session.realtime.voiceState == .speaking || session.realtime.isThinking {
+                session.cancelResponse()   // interrupt mid-response
+            } else {
+                session.realtime.toggleMute()
+            }
         } else {
             session.connect()
         }
     }
 
     private var statusLabel: String {
-        guard session.realtime.isConnected else { return "Tap to start" }
+        guard session.realtime.isConnected else { return "Connecting…" }
         if session.realtime.isMuted { return "Muted — tap to unmute" }
-        if session.realtime.voiceState == .speaking { return "Tutorly is speaking" }
-        if session.realtime.isThinking { return "Thinking…" }
+        if session.realtime.voiceState == .speaking { return "Speaking — tap to interrupt" }
+        if session.realtime.isThinking { return "Thinking… tap to cancel" }
         return "Listening…"
     }
 

@@ -15,4 +15,10 @@ final class TutorSession {
 
     func connect() { Task { await realtime.connect() } }
     func disconnect() { realtime.disconnect() }
+    func cancelResponse() { realtime.cancelResponse() }
+
+    func autoConnectIfKeyAvailable() {
+        guard !realtime.isConnected, Keychain.read("openai") != nil else { return }
+        connect()
+    }
 }
