@@ -3,32 +3,58 @@ import SwiftUI
 struct ContentView: View {
     @Environment(TutorSession.self) private var session
     @State private var showSettings = false
-    @State private var showTypeInput = false
-    @State private var typedPrompt = ""
-    @State private var mode: LearnMode = .teach
-    @State private var subject = ""
-    @FocusState private var isSubjectFocused: Bool
+    @State private var showProSheet = false
     @State private var toast: String?
-
-    private let suggestions = ["Algebra", "Calculus", "Biology", "Chemistry", "History"]
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            VStack(spacing: 12) {
-                headerCard
-                modeSubjectCard
-                toolsCard
-                whiteboardCard
-                voiceBarCard
+
+            VStack(spacing: 0) {
+                // Nav bar
+                HStack {
+                    Text("Tutorly").font(.system(size: 22, weight: .bold, design: .rounded))
+                    Spacer()
+                    Button(action: { showSettings = true }) {
+                        Image(systemName: "gear")
+                            .font(.system(size: 20, weight: .semibold))
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
+
+                // Central orb area
+                VStack(spacing: 16) {
+                    Spacer()
+
+                    Button(action: orbTapped) {
+                        VoiceOrb(state: session.realtime.voiceState, size: 160)
+                    }
+                    .buttonStyle(.plain)
+
+                    Text(statusLabel)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+                }
+
+                // Transcript
+                transcriptArea
+
+                Spacer(minLength: 12)
+
+                // Pro banner
+                proBanner
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 16)
 
             if let toast { toastView(toast) }
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
+        .sheet(isPresented: $showProSheet) { ProView() }
         .onChange(of: session.realtime.errorMessage) { _, newValue in
             guard let newValue else { return }
             withAnimation { toast = newValue }
@@ -37,118 +63,108 @@ struct ContentView: View {
         }
     }
 
-    private var headerCard: some View {
-        cardBase(height: 60) {
-            HStack {
-                HStack(spacing: 10) {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(LinearGradient(colors: [.blue, .teal], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 36, height: 36)
-                        .overlay(Text("T").bold().foregroundStyle(.white))
-                    Text("Tutor") + Text("ly").italic().foregroundStyle(.blue) + Text("•").foregroundStyle(.orange)
-                }.font(.system(size: 22, weight: .bold, design: .rounded))
-                Spacer()
-                HStack(spacing: 8) {
-                    Image(systemName: "text.alignleft")
-                    Button(action: { showSettings = true }) { Image(systemName: "gear") }
-                }
-                .font(.system(size: 19, weight: .semibold))
-                .frame(height: 36)
-            }
-        }
-    }
+    // MARK: - Subviews
 
-    private var modeSubjectCard: some View {
-        cardBase {
-            VStack(spacing: 10) {
-                Picker("Mode", selection: $mode) {
-                    ForEach(LearnMode.allCases, id: \.self) { Text($0.rawValue) }
-                }
-                .pickerStyle(.segmented)
-                TextField("What are we learning today?", text: $subject)
-                    .focused($isSubjectFocused)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12).frame(height: 44)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
-                    .overlay(alignment: .leading) { Image(systemName: "book").padding(.leading, 8).opacity(0.6) }
-                    .padding(.leading, 24)
-                if isSubjectFocused && subject.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack { ForEach(suggestions, id: \.self) { s in Button(s) { subject = s } } }
+    private var transcriptArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(session.transcriptTurns) { turn in
+                        TranscriptBubble(turn: turn)
+                            .id(turn.id)
+                    }
+                    if !session.realtime.liveCaption.isEmpty {
+                        TranscriptBubble(turn: TranscriptTurn(role: "assistant", text: session.realtime.liveCaption))
+                            .opacity(0.6)
+                            .id("live")
                     }
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
             }
-        }
-    }
-
-    private var toolsCard: some View {
-        cardBase {
-            HStack { ForEach(["black","blue","green","orange","red"], id: \.self) { c in Circle().fill(Color(c)).frame(width: 20, height: 20) }
-                Spacer(); Image(systemName: "pencil"); Image(systemName: "eraser"); Image(systemName: "trash") }
-            .font(.system(size: 16, weight: .semibold))
-        }
-    }
-
-    private var whiteboardCard: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 14).fill(Theme.bgElev)
-            TimelineView(.animation) { context in
-                let angle = Angle.degrees((context.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 360))
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(AngularGradient(colors: [.blue,.teal,.orange,.blue], center: .center, angle: angle), lineWidth: session.realtime.isThinking ? 3 : 1.5)
-                    .opacity(session.realtime.isThinking ? 0.95 : 0.35)
-            }
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    private var voiceBarCard: some View {
-        cardBase(height: 80) {
-            HStack(spacing: 12) {
-                VStack(spacing: 2) {
-                    Text(statusLine).font(.system(size: 14, weight: .medium, design: .rounded)).lineLimit(1)
-                    Button(action: voiceButtonTap) { Circle().fill(buttonGradient).frame(width: 64, height: 64).overlay(Image(systemName: voiceIcon).foregroundStyle(.white)) }
-                    Text(session.realtime.isConnected ? (session.realtime.isMuted ? "MUTED" : "LIVE") : "CONNECT")
-                        .font(.system(size: 9, weight: .bold, design: .rounded).monospaced()).tracking(1.3)
-                }
-                Spacer()
-                if showTypeInput && !session.realtime.isConnected {
-                    TextField("Type instead", text: $typedPrompt).textFieldStyle(.roundedBorder)
-                } else if !session.realtime.isConnected {
-                    Button("type instead") { withAnimation { showTypeInput = true } }
+            .frame(maxHeight: 240)
+            .onChange(of: session.transcriptTurns.count) { _, _ in
+                if let last = session.transcriptTurns.last {
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
+            .onChange(of: session.realtime.liveCaption) { _, _ in
+                withAnimation { proxy.scrollTo("live", anchor: .bottom) }
+            }
         }
     }
 
-    private func voiceButtonTap() {
-        if session.realtime.isConnected { session.realtime.toggleMute() }
-        else { session.connect() }
+    @ViewBuilder
+    private var proBanner: some View {
+        if ProService.shared.isPro {
+            Label("Tutorly Pro — Active", systemImage: "checkmark.seal.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.green)
+                .frame(maxWidth: .infinity)
+                .padding(14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        } else {
+            Button(action: { showProSheet = true }) {
+                HStack {
+                    Image(systemName: "sparkles")
+                    Text("Upgrade to Pro")
+                        .font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(Theme.accent)
+                .padding(14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.accent.opacity(0.35), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
     }
 
-    private var statusLine: String {
-        if !session.realtime.isConnected { return "Tap Connect to start" }
-        if session.realtime.isMuted { return "Muted" }
+    // MARK: - Helpers
+
+    private func orbTapped() {
+        if session.realtime.isConnected {
+            session.realtime.toggleMute()
+        } else {
+            session.connect()
+        }
+    }
+
+    private var statusLabel: String {
+        guard session.realtime.isConnected else { return "Tap to start" }
+        if session.realtime.isMuted { return "Muted — tap to unmute" }
         if session.realtime.voiceState == .speaking { return "Tutorly is speaking" }
-        if session.realtime.isThinking { return "Tutorly is thinking" }
+        if session.realtime.isThinking { return "Thinking…" }
         return "Listening…"
     }
 
-    private var voiceIcon: String { session.realtime.voiceState == .speaking ? "waveform" : (session.realtime.isConnected && !session.realtime.isMuted ? "mic" : "mic.slash") }
-    private var buttonGradient: LinearGradient {
-        if !session.realtime.isConnected { return .init(colors: [.blue,.teal], startPoint: .topLeading, endPoint: .bottomTrailing) }
-        if session.realtime.isMuted { return .init(colors: [.gray,.gray], startPoint: .topLeading, endPoint: .bottomTrailing) }
-        if session.realtime.voiceState == .speaking { return .init(colors: [.orange,.blue], startPoint: .topLeading, endPoint: .bottomTrailing) }
-        return .init(colors: [.teal,.orange], startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
     private func toastView(_ text: String) -> some View {
-        Text(text).font(.system(size: 13, weight: .medium)).foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 8).background(.black.opacity(0.85), in: Capsule()).frame(maxHeight: .infinity, alignment: .top).padding(.top, 18)
-    }
-
-    private func cardBase<Content: View>(height: CGFloat? = nil, @ViewBuilder content: () -> Content) -> some View {
-        content().padding(16).frame(maxWidth: .infinity).frame(height: height).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14)).overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+        Text(text)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.black.opacity(0.85), in: Capsule())
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.top, 18)
     }
 }
 
-private extension ContentView { enum LearnMode: String, CaseIterable { case teach = "Teach me", quiz = "Quiz me" } }
+private struct TranscriptBubble: View {
+    let turn: TranscriptTurn
+
+    var body: some View {
+        HStack {
+            if turn.role == "user" { Spacer(minLength: 48) }
+            Text(turn.text)
+                .font(.system(size: 14))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(turn.role == "user" ? Theme.accent.opacity(0.18) : Color.white.opacity(0.09),
+                            in: RoundedRectangle(cornerRadius: 12))
+            if turn.role != "user" { Spacer(minLength: 48) }
+        }
+    }
+}

@@ -350,9 +350,7 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
                     "type": "server_vad",
                     "threshold": NSNumber(value: 0.5),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 600),
-                    "create_response": true,
-                    "interrupt_response": true
+                    "silence_duration_ms": NSNumber(value: 500)
                 ] as [String: Any],
                 "temperature": NSNumber(value: 0.8),
                 "max_response_output_tokens": NSNumber(value: 300)
