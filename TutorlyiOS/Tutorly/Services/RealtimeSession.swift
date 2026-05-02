@@ -95,15 +95,18 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Audio setup
 
     private func setupAudio() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothA2DP])
-        try session.setActive(true, options: [.notifyOthersOnDeactivation])
+        let avs = AVAudioSession.sharedInstance()
+        // .default mode (not .voiceChat) avoids earpiece-first routing that voiceChat enforces.
+        // overrideOutputAudioPort after engine.start() explicitly forces the speaker.
+        try avs.setCategory(.playAndRecord, mode: .default,
+                            options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        try avs.setActive(true)
 
         do {
             try engine.inputNode.setVoiceProcessingEnabled(true)
-            print("[Audio] voice processing enabled (AEC active)")
+            print("[Audio] AEC enabled")
         } catch {
-            print("[Audio] AEC enable failed: \(error.localizedDescription)")
+            print("[Audio] AEC unavailable: \(error.localizedDescription)")
         }
 
         let hwFmt = engine.inputNode.outputFormat(forBus: 0)
@@ -130,7 +133,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
             guard let self, self.isConnected, !self.isMuted, let conv = self.converter else { return }
             if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
-                print("[Audio] mic buffer flowing (\(buf.frameLength) frames)")
+                print("[Audio] mic flowing \(buf.frameLength) frames")
             }
             let outCapacity = AVAudioFrameCount(Double(buf.frameLength) * self.sampleRate / hwFmt.sampleRate)
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: outCapacity) else { return }
@@ -151,11 +154,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         }
 
         try engine.start()
+        // Force speaker AFTER engine starts — voice processing may reset the route
+        try? avs.overrideOutputAudioPort(.speaker)
+        print("[Audio] engine started, output: \(avs.currentRoute.outputs.map { $0.portType.rawValue })")
         player.play()
+        print("[Audio] player.isPlaying=\(player.isPlaying)")
     }
 
     private func scheduleAudio(_ pcm: Data) {
         guard pcm.count >= 2, !isCancellingResponse else { return }
+        print("[Audio] scheduleAudio \(pcm.count)B engine=\(engine.isRunning) playing=\(player.isPlaying)")
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { return }
@@ -342,7 +350,7 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "marin",
+                "voice": "alloy",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
@@ -350,9 +358,7 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
                     "type": "server_vad",
                     "threshold": NSNumber(value: 0.5),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 600),
-                    "create_response": true,
-                    "interrupt_response": true
+                    "silence_duration_ms": NSNumber(value: 500)
                 ] as [String: Any],
                 "temperature": NSNumber(value: 0.8),
                 "max_response_output_tokens": NSNumber(value: 300)
