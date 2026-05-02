@@ -91,7 +91,7 @@ struct ContentView: View {
 
     private var whiteboardCard: some View {
         ZStack {
-            Whiteboard().clipShape(RoundedRectangle(cornerRadius: 14))
+            RoundedRectangle(cornerRadius: 14).fill(Theme.bgElev)
             TimelineView(.animation) { context in
                 let angle = Angle.degrees((context.date.timeIntervalSinceReferenceDate * 30).truncatingRemainder(dividingBy: 360))
                 RoundedRectangle(cornerRadius: 14)
