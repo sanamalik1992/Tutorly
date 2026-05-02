@@ -373,7 +373,6 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
                     "prefix_padding_ms": NSNumber(value: 300),
                     "silence_duration_ms": NSNumber(value: 500)
                 ] as [String: Any],
-                "temperature": NSNumber(value: 0.8),
                 "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
         ])
