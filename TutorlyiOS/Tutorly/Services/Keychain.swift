@@ -39,3 +39,9 @@ enum Keychain {
         SecItemDelete(q as CFDictionary)
     }
 }
+
+extension Keychain {
+    static func saveAppJwt(_ token: String) { save(token, for: "appJwt") }
+    static func appJwt() -> String?         { read("appJwt") }
+    static func deleteAppJwt()              { delete("appJwt") }
+}

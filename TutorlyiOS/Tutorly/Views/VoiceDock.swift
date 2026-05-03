@@ -6,40 +6,83 @@ struct VoiceDock: View {
     let onHint: () -> Void
     let onText: () -> Void
     let onSave: () -> Void
+    @State private var showProSheet = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            dockButton(
-                icon: session.realtime.isMuted ? "mic.slash.fill" : "mic.fill",
-                label: session.realtime.isMuted ? "unmute" : "mute",
-                action: { session.realtime.toggleMute() }
-            )
-            dockButton(icon: "lightbulb.fill",  label: "hint",   action: onHint)
+        VStack(spacing: 8) {
+            usageIndicator
 
-            VStack(spacing: 6) {
-                VoiceOrb(state: session.realtime.voiceState, size: 88)
-                    .frame(width: 110, height: 110)
+            HStack(spacing: 10) {
+                dockButton(
+                    icon: session.realtime.isMuted ? "mic.slash.fill" : "mic.fill",
+                    label: session.realtime.isMuted ? "unmute" : "mute",
+                    action: { session.realtime.toggleMute() }
+                )
+                dockButton(icon: "lightbulb.fill", label: "hint", action: onHint)
 
-                Text(statusLabel)
-                    .font(.ui(10, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(Theme.inkMuted)
-                    .textCase(.uppercase)
+                ZStack {
+                    VStack(spacing: 6) {
+                        VoiceOrb(state: session.realtime.voiceState, size: 88)
+                            .frame(width: 110, height: 110)
+                            .opacity(session.realtime.isFreeLimitReached ? 0.3 : 1.0)
+
+                        Text(statusLabel)
+                            .font(.ui(10, weight: .semibold))
+                            .tracking(0.6)
+                            .foregroundStyle(Theme.inkMuted)
+                            .textCase(.uppercase)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    if session.realtime.isFreeLimitReached {
+                        Button(action: { showProSheet = true }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 20))
+                                Text("Upgrade")
+                                    .font(.system(size: 11, weight: .bold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+
+                dockButton(icon: "text.alignleft", label: "text", action: onText)
+                dockButton(icon: "bookmark.fill", label: "save", action: onSave)
             }
-            .frame(maxWidth: .infinity)
-
-            dockButton(icon: "text.alignleft", label: "text",   action: onText)
-            dockButton(icon: "bookmark.fill",  label: "save",   action: onSave)
+            .frame(height: 120)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(height: 120)
         .background(Theme.bgElev)
         .clipShape(RoundedRectangle(cornerRadius: 32))
         .overlay(RoundedRectangle(cornerRadius: 32).strokeBorder(Theme.hairlineStrong, lineWidth: 1))
+        .sheet(isPresented: $showProSheet) { ProView() }
+    }
+
+    @ViewBuilder
+    private var usageIndicator: some View {
+        if let user = AuthService.shared.currentUser {
+            HStack(spacing: 6) {
+                if user.isPro {
+                    Label("Pro — Unlimited", systemImage: "checkmark.seal.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.green)
+                } else {
+                    let remaining = session.realtime.sessionsRemaining
+                    if remaining >= 0 {
+                        Text("\(remaining) / 3 sessions left today")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(remaining == 0 ? .red : Theme.inkSoft)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
     }
 
     private var statusLabel: String {
+        if session.realtime.isFreeLimitReached { return "LIMIT REACHED" }
         if session.realtime.isMuted { return "MUTED" }
         switch session.realtime.voiceState {
         case .speaking:  return "HOOT IS SPEAKING"

@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
 
+private let backendBase = "https://tutorly-backend-omega.vercel.app"
+
 @Observable
 final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // Observable state
@@ -12,6 +14,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var isMuted = false
     var drawTick = 0
     var pendingDrawBlock: DrawBlock?
+    var sessionsRemaining: Int = -1
+    var isFreeLimitReached: Bool = false
+    var sessionLimitSeconds: Int = 0
 
     // Private
     private var socket: URLSessionWebSocketTask?
@@ -27,6 +32,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var shouldAutoReconnect = false
+    private var sessionStartTime: Date?
     private var isAudioGated = false       // true while AI speaks + 2s after, blocks mic sends
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
@@ -44,8 +50,18 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
+        guard let jwt = Keychain.appJwt() else {
+            await MainActor.run { errorMessage = "Not signed in" }
+            return
+        }
         do {
-            let key = try await BackendService.fetchRealtimeToken()
+            let (ephemeralToken, limitSecs, sessionsLeft) = try await startBackendSession(jwt: jwt)
+            await MainActor.run {
+                self.sessionLimitSeconds = limitSecs
+                self.sessionsRemaining = sessionsLeft
+                self.isFreeLimitReached = false
+            }
+            sessionStartTime = Date()
 
             guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
                 throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"])
@@ -68,12 +84,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             try setupAudio()
 
             var req = URLRequest(url: url)
-            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            req.setValue("Bearer \(ephemeralToken)", forHTTPHeaderField: "Authorization")
             req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
             print("[WS] connect -> \(req.url?.absoluteString ?? "nil") auth=Bearer ***")
             socket = urlSession.webSocketTask(with: req)
             socket?.resume()
             receive()
+        } catch let e as FreeLimitError {
+            await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
         } catch {
             await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
         }
@@ -102,6 +120,11 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         shouldAutoReconnect = false
         micGateReleaseTask?.cancel()
         isAudioGated = false
+        if let startTime = sessionStartTime, let jwt = Keychain.appJwt() {
+            let secondsUsed = Int(Date().timeIntervalSince(startTime))
+            Task { await self.endBackendSession(jwt: jwt, secondsUsed: secondsUsed) }
+        }
+        sessionStartTime = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         if engine.isRunning { engine.stop() }
@@ -111,6 +134,50 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         hasSentGreeting = false
     }
 
+    // MARK: - Backend session
+
+    private func startBackendSession(jwt: String) async throws -> (ephemeralToken: String, limitSeconds: Int, sessionsRemaining: Int) {
+        guard let url = URL(string: "\(backendBase)/api/session/start") else {
+            throw NSError(domain: "Realtime", code: 10, userInfo: [NSLocalizedDescriptionKey: "Invalid session start URL"])
+        }
+        var req = URLRequest(url: url, timeoutInterval: 15)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "Realtime", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+
+        if http.statusCode == 402 {
+            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+                .flatMap { $0["message"] as? String }
+                ?? "Session limit reached. Upgrade to Pro for unlimited access."
+            throw FreeLimitError(message: msg)
+        }
+
+        guard http.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["ephemeralToken"] as? String else {
+            throw NSError(domain: "Realtime", code: 12, userInfo: [NSLocalizedDescriptionKey: "Failed to start session"])
+        }
+
+        let limitSeconds = json["sessionLimitSeconds"] as? Int ?? 0
+        let sessionsLeft = json["sessionsRemaining"] as? Int ?? -1
+        return (token, limitSeconds, sessionsLeft)
+    }
+
+    private func endBackendSession(jwt: String, secondsUsed: Int) async {
+        guard let url = URL(string: "\(backendBase)/api/session/end") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["secondsUsed": secondsUsed])
+        _ = try? await URLSession.shared.data(for: req)
+        print("[Session] reported \(secondsUsed)s to backend")
+    }
 
     // MARK: - Audio setup
 
@@ -418,4 +485,8 @@ You are voice-only — you cannot see the student.
             await connect()
         }
     }
+}
+
+private struct FreeLimitError: Error {
+    let message: String
 }

@@ -52,6 +52,7 @@
 		A100008C /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		A100008E /* ProService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProService.swift; sourceTree = "<group>"; };
 		A1000094 /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
+		A1000096 /* Tutorly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tutorly.entitlements; sourceTree = "<group>"; };
 		A1000090 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		A1000092 /* ProView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -87,6 +88,7 @@
 				A1000035 /* Views */,
 				A100000B /* Assets.xcassets */,
 				A100000D /* Info.plist */,
+				A1000096 /* Tutorly.entitlements */,
 				A1000036 /* Preview Content */,
 			);
 			path = Tutorly;
@@ -291,8 +293,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Tutorly/Tutorly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -315,8 +318,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Tutorly/Tutorly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

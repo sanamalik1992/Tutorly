@@ -53,7 +53,10 @@ struct ContentView: View {
 
             if let toast { toastView(toast) }
         }
-        .onAppear { session.autoConnect() }
+        .onAppear {
+            session.autoConnect()
+            Task { await AuthService.shared.refreshUser() }
+        }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
         .sheet(isPresented: $showProSheet) { ProView() }
         .onChange(of: session.realtime.errorMessage) { _, newValue in
