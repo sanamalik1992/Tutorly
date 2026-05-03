@@ -379,7 +379,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             // before the server VAD can pick up audio again.
             micGateReleaseTask?.cancel()
             micGateReleaseTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
                 guard let self, !Task.isCancelled else { return }
                 self.isAudioGated = false
             }
@@ -462,9 +462,9 @@ You are voice-only — you cannot see the student.
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSDecimalNumber(string: "0.7"),
+                    "threshold": NSDecimalNumber(string: "0.8"),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 500)
+                    "silence_duration_ms": NSNumber(value: 800)
                 ] as [String: Any],
                 "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
