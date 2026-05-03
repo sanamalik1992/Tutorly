@@ -16,8 +16,9 @@ struct TutorlyApp: App {
                 }
             }
             .preferredColorScheme(.dark)
-            .onOpenURL { url in
-                ProService.shared.handleDeepLink(url)
+            .onOpenURL { url in ProService.shared.handleDeepLink(url) }
+            .onChange(of: auth.isSignedIn) { _, isSignedIn in
+                if isSignedIn { session.autoConnectIfKeyAvailable() }
             }
         }
     }

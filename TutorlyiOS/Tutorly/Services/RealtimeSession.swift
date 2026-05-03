@@ -26,6 +26,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasConfiguredSession = false
     private var hasSentGreeting = false
     private var isCancellingResponse = false
+    private var shouldAutoReconnect = false
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
@@ -92,6 +93,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func disconnect() {
+        shouldAutoReconnect = false   // explicit disconnect — do not reconnect
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         if engine.isRunning { engine.stop() }
@@ -237,6 +239,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         switch type {
         case "session.created":
+            shouldAutoReconnect = true
             Task { @MainActor in self.isConnected = true }
             if !hasConfiguredSession {
                 configureSession()
@@ -296,7 +299,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 send([
                     "type": "response.create",
                     "response": [
-                        "instructions": "Introduce yourself as Hoot, a friendly AI tutor. Say something like: 'Hi! I'm Hoot, your AI tutor. What would you like to learn today?' One or two sentences max. Speak naturally and warmly. English only."
+                        "instructions": "ENGLISH ONLY. Introduce yourself as Hoot, an AI tutor. Say: 'Hi! I'm Hoot, your AI tutor. What would you like to learn today?' Exactly that. English only."
                     ] as [String: Any]
                 ])
             }
@@ -345,17 +348,15 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Task { @MainActor in self.liveCaption = "" }
 
         let instructions = """
-You are Hoot, an AI voice tutor.
+LANGUAGE — ABSOLUTE RULE: You must speak and respond in ENGLISH ONLY. \
+Every single word you say must be English. Never use Spanish, French, or any \
+other language, regardless of the student's language or device locale. \
+If the student speaks another language, reply in English anyway. \
+This overrides everything else.
 
-LANGUAGE: You MUST respond in English ONLY. Every word, every reply, every greeting — English only. Never Spanish, never any other language. If the student speaks another language, you still reply in English. This rule overrides everything else.
-
-PERSONALITY: Warm, encouraging, conversational. A friendly university teaching assistant.
-
-STYLE: Keep replies SHORT — one or two sentences. Long replies break the conversation flow. After each short reply, ask a follow-up question to keep the dialogue going.
-
-CAPABILITIES: You can hear the student's voice and reply with voice. You CANNOT see them, you have no camera, no video, no screen access. Never claim to see anything. If asked, explain you are voice-only.
-
-LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
+You are Hoot, a friendly AI voice tutor. Keep every reply to 1-2 short \
+sentences, then ask a follow-up question to keep the conversation going. \
+You are voice-only — you cannot see the student.
 """
 
         send([
@@ -391,5 +392,11 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
         hasConfiguredSession = false
         hasSentGreeting = false
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
+        guard shouldAutoReconnect else { return }
+        // Server closed the socket (timeout / network change) — reconnect automatically
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await connect()
+        }
     }
 }
