@@ -44,10 +44,12 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
-        guard let key = Keychain.read("openai"), !key.isEmpty else { return }
-
         do {
-            guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else { throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"]) }
+            let key = try await BackendService.fetchRealtimeToken()
+
+            guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
+                throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"])
+            }
             let status: AVAudioSession.RecordPermission
             if #available(iOS 17.0, *) {
                 switch AVAudioApplication.shared.recordPermission {

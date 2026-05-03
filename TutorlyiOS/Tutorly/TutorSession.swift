@@ -17,8 +17,8 @@ final class TutorSession {
     func disconnect() { realtime.disconnect() }
     func cancelResponse() { realtime.cancelResponse() }
 
-    func autoConnectIfKeyAvailable() {
-        guard !realtime.isConnected, Keychain.read("openai") != nil else { return }
+    func autoConnect() {
+        guard !realtime.isConnected else { return }
         connect()
     }
 }

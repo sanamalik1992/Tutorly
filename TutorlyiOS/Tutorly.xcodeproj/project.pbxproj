@@ -25,6 +25,7 @@
 		A100008B /* WelcomeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008A /* WelcomeSheet.swift */; };
 		A100008D /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008C /* AuthService.swift */; };
 		A100008F /* ProService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008E /* ProService.swift */; };
+		A1000095 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000094 /* BackendService.swift */; };
 		A1000091 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000090 /* LoginView.swift */; };
 		A1000093 /* ProView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000092 /* ProView.swift */; };
 /* End PBXBuildFile section */
@@ -50,6 +51,7 @@
 		A100008A /* WelcomeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeSheet.swift; sourceTree = "<group>"; };
 		A100008C /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		A100008E /* ProService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProService.swift; sourceTree = "<group>"; };
+		A1000094 /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		A1000090 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		A1000092 /* ProView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -113,6 +115,7 @@
 				A100001D /* RealtimeSession.swift */,
 				A100008C /* AuthService.swift */,
 				A100008E /* ProService.swift */,
+				A1000094 /* BackendService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -223,6 +226,7 @@
 				A1000089 /* SettingsSheet.swift in Sources */,
 				A100008D /* AuthService.swift in Sources */,
 				A100008F /* ProService.swift in Sources */,
+				A1000095 /* BackendService.swift in Sources */,
 				A1000091 /* LoginView.swift in Sources */,
 				A1000093 /* ProView.swift in Sources */,
 			);
@@ -288,7 +292,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -312,7 +316,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
