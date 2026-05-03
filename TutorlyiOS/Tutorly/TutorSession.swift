@@ -15,4 +15,10 @@ final class TutorSession {
 
     func connect() { Task { await realtime.connect() } }
     func disconnect() { realtime.disconnect() }
+    func cancelResponse() { realtime.cancelResponse() }
+
+    func autoConnect() {
+        guard !realtime.isConnected else { return }
+        connect()
+    }
 }

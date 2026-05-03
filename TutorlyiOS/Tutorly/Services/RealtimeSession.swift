@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
 
+private let backendBase = "https://tutorly-backend-omega.vercel.app"
+
 @Observable
 final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // Observable state
@@ -12,6 +14,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var isMuted = false
     var drawTick = 0
     var pendingDrawBlock: DrawBlock?
+    var sessionsRemaining: Int = -1
+    var isFreeLimitReached: Bool = false
+    var sessionLimitSeconds: Int = 0
 
     // Private
     private var socket: URLSessionWebSocketTask?
@@ -26,9 +31,13 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasConfiguredSession = false
     private var hasSentGreeting = false
     private var isCancellingResponse = false
+    private var shouldAutoReconnect = false
+    private var sessionStartTime: Date?
+    private var isAudioGated = false       // true while AI speaks + 2s after, blocks mic sends
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var micGateReleaseTask: Task<Void, Never>?
     @ObservationIgnored var completedTranscriptTurn: ((TranscriptTurn) -> Void)?
 
     // MARK: - Init
@@ -41,10 +50,22 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
-        guard let key = Keychain.read("openai"), !key.isEmpty else { return }
-
+        guard let jwt = Keychain.appJwt() else {
+            await MainActor.run { errorMessage = "Not signed in" }
+            return
+        }
         do {
-            guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else { throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"]) }
+            let (ephemeralToken, limitSecs, sessionsLeft) = try await startBackendSession(jwt: jwt)
+            await MainActor.run {
+                self.sessionLimitSeconds = limitSecs
+                self.sessionsRemaining = sessionsLeft
+                self.isFreeLimitReached = false
+            }
+            sessionStartTime = Date()
+
+            guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
+                throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"])
+            }
             let status: AVAudioSession.RecordPermission
             if #available(iOS 17.0, *) {
                 switch AVAudioApplication.shared.recordPermission {
@@ -63,12 +84,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             try setupAudio()
 
             var req = URLRequest(url: url)
-            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            req.setValue("Bearer \(ephemeralToken)", forHTTPHeaderField: "Authorization")
             req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
             print("[WS] connect -> \(req.url?.absoluteString ?? "nil") auth=Bearer ***")
             socket = urlSession.webSocketTask(with: req)
             socket?.resume()
             receive()
+        } catch let e as FreeLimitError {
+            await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
         } catch {
             await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
         }
@@ -76,12 +99,32 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     func toggleMute() {
         isMuted.toggle()
-        if isMuted {
-            voiceState = .idle
+        if isMuted { voiceState = .idle }
+    }
+
+    func cancelResponse() {
+        guard isAssistantResponding else { return }
+        isCancellingResponse = true
+        micGateReleaseTask?.cancel()
+        isAudioGated = false             // user is interrupting — open mic right away
+        send(["type": "response.cancel"])
+        player.stop()
+        isAssistantResponding = false
+        Task { @MainActor in
+            self.voiceState = .idle
+            self.isThinking = false
         }
     }
 
     func disconnect() {
+        shouldAutoReconnect = false
+        micGateReleaseTask?.cancel()
+        isAudioGated = false
+        if let startTime = sessionStartTime, let jwt = Keychain.appJwt() {
+            let secondsUsed = Int(Date().timeIntervalSince(startTime))
+            Task { await self.endBackendSession(jwt: jwt, secondsUsed: secondsUsed) }
+        }
+        sessionStartTime = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         if engine.isRunning { engine.stop() }
@@ -91,6 +134,50 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         hasSentGreeting = false
     }
 
+    // MARK: - Backend session
+
+    private func startBackendSession(jwt: String) async throws -> (ephemeralToken: String, limitSeconds: Int, sessionsRemaining: Int) {
+        guard let url = URL(string: "\(backendBase)/api/session/start") else {
+            throw NSError(domain: "Realtime", code: 10, userInfo: [NSLocalizedDescriptionKey: "Invalid session start URL"])
+        }
+        var req = URLRequest(url: url, timeoutInterval: 15)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "Realtime", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+
+        if http.statusCode == 402 {
+            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+                .flatMap { $0["message"] as? String }
+                ?? "Session limit reached. Upgrade to Pro for unlimited access."
+            throw FreeLimitError(message: msg)
+        }
+
+        guard http.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = json["ephemeralToken"] as? String else {
+            throw NSError(domain: "Realtime", code: 12, userInfo: [NSLocalizedDescriptionKey: "Failed to start session"])
+        }
+
+        let limitSeconds = json["sessionLimitSeconds"] as? Int ?? 0
+        let sessionsLeft = json["sessionsRemaining"] as? Int ?? -1
+        return (token, limitSeconds, sessionsLeft)
+    }
+
+    private func endBackendSession(jwt: String, secondsUsed: Int) async {
+        guard let url = URL(string: "\(backendBase)/api/session/end") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["secondsUsed": secondsUsed])
+        _ = try? await URLSession.shared.data(for: req)
+        print("[Session] reported \(secondsUsed)s to backend")
+    }
 
     // MARK: - Audio setup
 
@@ -131,7 +218,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
-            guard let self, self.isConnected, !self.isMuted, let conv = self.converter else { return }
+            // Gate mic while AI is speaking AND for 2s after it finishes.
+            // This prevents room echo from triggering the server VAD after playback ends.
+            guard let self, self.isConnected, !self.isMuted, !self.isAudioGated,
+                  let conv = self.converter else { return }
             if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
                 print("[Audio] mic flowing \(buf.frameLength) frames")
             }
@@ -224,6 +314,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         switch type {
         case "session.created":
+            shouldAutoReconnect = true
             Task { @MainActor in self.isConnected = true }
             if !hasConfiguredSession {
                 configureSession()
@@ -232,6 +323,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         case "response.created":
             isAssistantResponding = true
+            isAudioGated = true           // close mic immediately
+            micGateReleaseTask?.cancel()
             transcriptBuffer = ""
             responseTimeoutTask?.cancel()
             responseTimeoutTask = Task { [weak self] in
@@ -239,6 +332,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 guard let self, !Task.isCancelled else { return }
                 await MainActor.run {
                     self.isAssistantResponding = false
+                    self.isAudioGated = false
                     self.voiceState = .idle
                     self.errorMessage = "Tutor took too long — try again"
                 }
@@ -275,6 +369,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
             Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
+            // Keep mic gated for 2 more seconds so room echo from the speaker fades
+            // before the server VAD can pick up audio again.
+            micGateReleaseTask?.cancel()
+            micGateReleaseTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.isAudioGated = false
+            }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
@@ -283,7 +385,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 send([
                     "type": "response.create",
                     "response": [
-                        "instructions": "Greet the student warmly in ONE short English sentence. Ask what they'd like to learn today. English only."
+                        "instructions": "ENGLISH ONLY. Introduce yourself as Hoot, an AI tutor. Say: 'Hi! I'm Hoot, your AI tutor. What would you like to learn today?' Exactly that. English only."
                     ] as [String: Any]
                 ])
             }
@@ -332,17 +434,15 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Task { @MainActor in self.liveCaption = "" }
 
         let instructions = """
-You are Hoot, an AI voice tutor.
+LANGUAGE — ABSOLUTE RULE: You must speak and respond in ENGLISH ONLY. \
+Every single word you say must be English. Never use Spanish, French, or any \
+other language, regardless of the student's language or device locale. \
+If the student speaks another language, reply in English anyway. \
+This overrides everything else.
 
-LANGUAGE: You MUST respond in English ONLY. Every word, every reply, every greeting — English only. Never Spanish, never any other language. If the student speaks another language, you still reply in English. This rule overrides everything else.
-
-PERSONALITY: Warm, encouraging, conversational. A friendly university teaching assistant.
-
-STYLE: Keep replies SHORT — one or two sentences. Long replies break the conversation flow. After each short reply, ask a follow-up question to keep the dialogue going.
-
-CAPABILITIES: You can hear the student's voice and reply with voice. You CANNOT see them, you have no camera, no video, no screen access. Never claim to see anything. If asked, explain you are voice-only.
-
-LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
+You are Hoot, a friendly AI voice tutor. Keep every reply to 1-2 short \
+sentences, then ask a follow-up question to keep the conversation going. \
+You are voice-only — you cannot see the student.
 """
 
         send([
@@ -356,11 +456,10 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSNumber(value: 0.5),
+                    "threshold": NSNumber(value: 0.7),
                     "prefix_padding_ms": NSNumber(value: 300),
                     "silence_duration_ms": NSNumber(value: 500)
                 ] as [String: Any],
-                "temperature": NSNumber(value: 0.8),
                 "max_response_output_tokens": NSNumber(value: 300)
             ] as [String: Any]
         ])
@@ -379,5 +478,15 @@ LANGUAGE RULE (REPEATED FOR EMPHASIS): English. Always. No exceptions.
         hasConfiguredSession = false
         hasSentGreeting = false
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
+        guard shouldAutoReconnect else { return }
+        // Server closed the socket (timeout / network change) — reconnect automatically
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await connect()
+        }
     }
+}
+
+private struct FreeLimitError: Error {
+    let message: String
 }

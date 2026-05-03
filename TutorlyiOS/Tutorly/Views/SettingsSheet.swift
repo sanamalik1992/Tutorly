@@ -3,43 +3,41 @@ import SwiftUI
 struct SettingsSheet: View {
     @Environment(TutorSession.self) private var session
     @Environment(\.dismiss) private var dismiss
-    @State private var apiKey = Keychain.read("openai") ?? ""
-    @State private var saved = false
     @State private var showProSheet = false
+    @State private var showSignOutConfirm = false
+    private var auth: AuthService { AuthService.shared }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    SecureField("sk-...", text: $apiKey)
-                        .font(.system(size: 14, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: { Text("OpenAI API Key") }
-                  footer: { Text("Stored in iOS Keychain on your device only. Never sent anywhere except to OpenAI's Realtime API.") }
-
-                Section {
-                    Button {
-                        Keychain.save(apiKey, for: "openai")
-                        saved = true
-                        Task {
-                            try? await Task.sleep(nanoseconds: 600_000_000)
-                            session.connect()
-                            dismiss()
+                if let user = auth.currentUser {
+                    Section {
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 40))
+                                .foregroundStyle(Theme.accent)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(user.name)
+                                        .font(.system(size: 16, weight: .semibold))
+                                    if user.isPro {
+                                        Text("PRO")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Theme.accent, in: Capsule())
+                                    }
+                                }
+                                if let email = user.email {
+                                    Text(email)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text(saved ? "Saved ✓" : "Save & Connect").bold()
-                            Spacer()
-                        }
+                        .padding(.vertical, 4)
                     }
-                    .disabled(apiKey.isEmpty)
-                }
-
-                Section {
-                    Link("Get a key at console.openai.com",
-                         destination: URL(string: "https://platform.openai.com/api-keys")!)
                 }
 
                 Section("Subscription") {
@@ -51,15 +49,20 @@ struct SettingsSheet: View {
                             Label("Upgrade to Pro", systemImage: "sparkles")
                                 .foregroundStyle(Theme.accent)
                         }
+                        if let user = auth.currentUser, user.sessionsRemaining >= 0 {
+                            HStack {
+                                Text("Free sessions remaining")
+                                Spacer()
+                                Text("\(user.sessionsRemaining)")
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(user.sessionsRemaining == 0 ? .red : .secondary)
+                            }
+                        }
                     }
                 }
 
                 Section {
-                    Button(role: .destructive, action: {
-                        session.disconnect()
-                        AuthService.shared.signOut()
-                        dismiss()
-                    }) {
+                    Button(role: .destructive, action: { showSignOutConfirm = true }) {
                         HStack {
                             Spacer()
                             Text("Sign Out")
@@ -74,6 +77,14 @@ struct SettingsSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .confirmationDialog("Sign out of Tutorly?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
+                Button("Sign Out", role: .destructive) {
+                    session.disconnect()
+                    auth.signOut()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
         .sheet(isPresented: $showProSheet) { ProView() }

@@ -25,7 +25,7 @@ struct TopNav: View {
                     Text(session.topic)
                         .font(.ui(14, weight: .semibold))
                         .foregroundStyle(Theme.ink)
-                    Text(session.realtime.isConnected ? "live · \(formattedTime)" : "connecting…")
+                    Text(session.realtime.isConnected ? timeLabel : "connecting…")
                         .font(.ui(11))
                         .foregroundStyle(Theme.inkMuted)
                 }
@@ -54,6 +54,13 @@ struct TopNav: View {
 
     private var formattedTime: String {
         String(format: "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
+    }
+
+    private var timeLabel: String {
+        let limit = session.realtime.sessionLimitSeconds
+        guard limit > 0 else { return "live · \(formattedTime)" }
+        let limitStr = String(format: "%02d:%02d", limit / 60, limit % 60)
+        return "live · \(formattedTime) / \(limitStr)"
     }
 }
 
