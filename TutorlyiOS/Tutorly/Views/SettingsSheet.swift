@@ -68,6 +68,7 @@ struct SettingsSheet: View {
                     }
                 }
             }
+            .onAppear { apiKey = Keychain.read("openai") ?? "" }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

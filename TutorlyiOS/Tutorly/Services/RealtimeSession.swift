@@ -27,9 +27,11 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var shouldAutoReconnect = false
+    private var isAudioGated = false       // true while AI speaks + 2s after, blocks mic sends
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var micGateReleaseTask: Task<Void, Never>?
     @ObservationIgnored var completedTranscriptTurn: ((TranscriptTurn) -> Void)?
 
     // MARK: - Init
@@ -83,6 +85,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func cancelResponse() {
         guard isAssistantResponding else { return }
         isCancellingResponse = true
+        micGateReleaseTask?.cancel()
+        isAudioGated = false             // user is interrupting — open mic right away
         send(["type": "response.cancel"])
         player.stop()
         isAssistantResponding = false
@@ -93,7 +97,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func disconnect() {
-        shouldAutoReconnect = false   // explicit disconnect — do not reconnect
+        shouldAutoReconnect = false
+        micGateReleaseTask?.cancel()
+        isAudioGated = false
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         if engine.isRunning { engine.stop() }
@@ -143,9 +149,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
-            // Gate mic sends while AI is speaking — prevents speaker echo being sent back to the server.
-            // The user can still interrupt by tapping the orb (sends response.cancel explicitly).
-            guard let self, self.isConnected, !self.isMuted, !self.isAssistantResponding,
+            // Gate mic while AI is speaking AND for 2s after it finishes.
+            // This prevents room echo from triggering the server VAD after playback ends.
+            guard let self, self.isConnected, !self.isMuted, !self.isAudioGated,
                   let conv = self.converter else { return }
             if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
                 print("[Audio] mic flowing \(buf.frameLength) frames")
@@ -248,6 +254,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         case "response.created":
             isAssistantResponding = true
+            isAudioGated = true           // close mic immediately
+            micGateReleaseTask?.cancel()
             transcriptBuffer = ""
             responseTimeoutTask?.cancel()
             responseTimeoutTask = Task { [weak self] in
@@ -255,6 +263,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 guard let self, !Task.isCancelled else { return }
                 await MainActor.run {
                     self.isAssistantResponding = false
+                    self.isAudioGated = false
                     self.voiceState = .idle
                     self.errorMessage = "Tutor took too long — try again"
                 }
@@ -291,6 +300,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
             Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
+            // Keep mic gated for 2 more seconds so room echo from the speaker fades
+            // before the server VAD can pick up audio again.
+            micGateReleaseTask?.cancel()
+            micGateReleaseTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.isAudioGated = false
+            }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
@@ -370,7 +387,7 @@ You are voice-only — you cannot see the student.
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSNumber(value: 0.5),
+                    "threshold": NSNumber(value: 0.7),
                     "prefix_padding_ms": NSNumber(value: 300),
                     "silence_duration_ms": NSNumber(value: 500)
                 ] as [String: Any],
