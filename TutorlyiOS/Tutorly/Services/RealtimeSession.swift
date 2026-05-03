@@ -291,9 +291,15 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 if case .string(let s) = msg { self.handle(s) }
                 self.receive()
             case .failure(let e):
-                Task { @MainActor in
-                    self.errorMessage = "WebSocket: \(e.localizedDescription)"
-                    self.isConnected = false
+                print("[WS] receive ended: \(e.localizedDescription)")
+                Task { @MainActor in self.isConnected = false }
+                // If the socket drops mid-session, trigger reconnect here too
+                // (didCloseWith handles clean closes; network drops come through failure)
+                guard self.shouldAutoReconnect else { return }
+                Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !self.isConnected else { return }
+                    await self.connect()
                 }
             }
         }
@@ -456,7 +462,7 @@ You are voice-only — you cannot see the student.
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSNumber(value: 0.7),
+                    "threshold": NSDecimalNumber(string: "0.7"),
                     "prefix_padding_ms": NSNumber(value: 300),
                     "silence_duration_ms": NSNumber(value: 500)
                 ] as [String: Any],
