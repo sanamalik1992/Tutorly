@@ -456,7 +456,7 @@ You are voice-only — you cannot see the student.
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "alloy",
+                "voice": "echo",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
