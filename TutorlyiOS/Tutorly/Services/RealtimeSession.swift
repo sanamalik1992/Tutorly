@@ -51,22 +51,22 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
-        #if DEBUG
-        // Local testing bypass: if a dev OpenAI key is in Keychain, skip the backend
-        // session-start (and its free-limit gate) and connect to OpenAI directly.
-        // Set the key from Settings → "Dev OpenAI Key" (DEBUG builds only).
-        if let devKey = Keychain.read("openai"), !devKey.isEmpty {
+        // Dev/test bypass: in DEBUG or TestFlight (sandbox), if a dev OpenAI key is
+        // in Keychain, skip the backend session-start (and its free-limit gate) and
+        // connect to OpenAI directly. Set the key from Settings → "Dev OpenAI Key".
+        // Production App Store builds always skip this branch.
+        if Keychain.allowDevBypass,
+           let devKey = Keychain.read("openai"), !devKey.isEmpty {
             await MainActor.run {
                 self.sessionLimitSeconds = 0
                 self.sessionsRemaining = -1
                 self.isFreeLimitReached = false
             }
             sessionStartTime = Date()
-            print("[Auth] DEBUG bypass: using stored OpenAI key, skipping backend")
+            print("[Auth] dev bypass: using stored OpenAI key, skipping backend")
             await connectWithToken(devKey)
             return
         }
-        #endif
 
         guard let jwt = Keychain.appJwt() else {
             await MainActor.run { errorMessage = "Not signed in" }
