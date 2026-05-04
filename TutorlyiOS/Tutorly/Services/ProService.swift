@@ -8,7 +8,11 @@ final class ProService {
 
     private let storeKit = StoreKitManager.shared
 
-    var isPro: Bool { storeKit.isSubscribed }
+    // True if either local StoreKit entitlement OR backend flag says Pro.
+    // This keeps things working even if one source hasn't synced yet.
+    var isPro: Bool {
+        storeKit.isSubscribed || (AuthService.shared.currentUser?.isPro ?? false)
+    }
 
     func handleDeepLink(_ url: URL) {
         // No-op for IAP — Apple manages purchase confirmation in-app.
