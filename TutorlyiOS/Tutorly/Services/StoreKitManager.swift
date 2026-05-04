@@ -59,6 +59,8 @@ final class StoreKitManager {
                 await txn.finish()
                 purchasedProductIDs.insert(txn.productID)
                 await reportToBackend(txn)
+                // Sync backend Pro flag so SettingsSheet / session limits update immediately
+                _ = await AuthService.shared.refreshUser()
             case .userCancelled:
                 break
             case .pending:
@@ -77,6 +79,7 @@ final class StoreKitManager {
         do {
             try await AppStore.sync()
             await refreshEntitlements()
+            _ = await AuthService.shared.refreshUser()
         } catch {
             purchaseError = "Restore failed: \(error.localizedDescription)"
         }
@@ -99,6 +102,7 @@ final class StoreKitManager {
             await txn.finish()
             await refreshEntitlements()
             await reportToBackend(txn)
+            _ = await AuthService.shared.refreshUser()
         }
     }
 
