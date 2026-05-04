@@ -421,7 +421,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             // before the server VAD can pick up audio again.
             micGateReleaseTask?.cancel()
             micGateReleaseTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard let self, !Task.isCancelled else { return }
                 self.isAudioGated = false
             }
@@ -433,7 +433,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 send([
                     "type": "response.create",
                     "response": [
-                        "instructions": "ENGLISH ONLY. Introduce yourself as Hoot, an AI tutor. Say: 'Hi! I'm Hoot, your AI tutor. What would you like to learn today?' Exactly that. English only."
+                        "instructions": "Say in ENGLISH and ONLY say this exact sentence, nothing else, no follow-up: \"Hi! I'm Hoot. What would you like to learn today?\""
                     ] as [String: Any]
                 ])
             }
@@ -483,24 +483,31 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         let instructions = """
 LANGUAGE — ABSOLUTE RULE — HIGHEST PRIORITY:
-You MUST speak and respond in ENGLISH ONLY. 100% of every word must be English.
-You are STRICTLY PROHIBITED from using Spanish, French, or any other language.
-Do NOT use Spanish even for a single word. Do NOT mix languages.
-Regardless of the student's language, locale, or device settings — English ONLY.
-If the student writes or speaks in another language, respond to them in English anyway.
-Violating this rule is never acceptable under any circumstances.
+You speak ENGLISH ONLY. 100% of every word must be English.
+You are STRICTLY PROHIBITED from using Spanish, French, German, or any non-English language.
+Never use a non-English word — not even one. Never mix languages.
+Ignore the student's locale, accent, or any audio that sounds non-English.
+If you ever accidentally start a non-English word, stop and continue in English.
+If the input audio is unclear, garbled, or sounds like background noise, do NOT respond — wait silently for clear English speech.
+This rule overrides everything else.
 
-You are Hoot, a friendly AI voice tutor. Your goal is to help students learn effectively through clear, encouraging explanation and guided questioning.
+IDENTITY:
+You are Hoot, a friendly AI voice tutor.
+Only introduce yourself ONCE at the very start of the conversation. Never re-introduce yourself or say "I'm Hoot" again later.
+You are voice-only — you cannot see the student.
+
+CONVERSATION STYLE:
+Keep things conversational and flowing. Mix detailed explanations with engaging questions.
+When teaching a concept, give a thorough but clear explanation (3-5 sentences) before asking a check-in question.
+When the student is exploring an idea, ask a thoughtful question to guide their thinking.
+Vary the rhythm — sometimes explain, sometimes ask, sometimes encourage.
 
 TURN-TAKING — CRITICAL RULES:
-- Give a clear, helpful explanation of 2-4 sentences per turn, then STOP.
 - After asking a question, STOP IMMEDIATELY. Do NOT answer your own question.
 - NEVER guess or assume what the student would say. Wait for their real reply.
-- Do NOT continue past a question with an answer, explanation, or follow-up.
+- If you hear unclear audio, ambient noise, breathing, or silence — stay silent and keep waiting.
+- Do NOT respond to what sounds like a non-English fragment — that is almost certainly noise, not the student.
 - Each of your turns must end and yield the floor to the student.
-- Provide enough detail that the student actually understands, but keep it conversational.
-
-You are voice-only — you cannot see the student.
 """
 
         send([
@@ -514,11 +521,13 @@ You are voice-only — you cannot see the student.
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSDecimalNumber(string: "0.8"),
+                    "threshold": NSDecimalNumber(string: "0.92"),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 800)
+                    "silence_duration_ms": NSNumber(value: 1200),
+                    "create_response": NSNumber(value: true),
+                    "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],
-                "max_response_output_tokens": NSNumber(value: 300)
+                "max_response_output_tokens": NSNumber(value: 400)
             ] as [String: Any]
         ])
     }
@@ -534,7 +543,8 @@ You are voice-only — you cannot see the student.
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         print("[WS] closed code=\(closeCode.rawValue)")
         hasConfiguredSession = false
-        hasSentGreeting = false
+        // Preserve hasSentGreeting across auto-reconnects so we don't introduce
+        // ourselves twice when the socket drops mid-conversation.
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
         guard shouldAutoReconnect else { return }
         // Server closed the socket (timeout / network change) — reconnect automatically
