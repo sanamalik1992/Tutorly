@@ -32,8 +32,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var shouldAutoReconnect = false
+    private var isConnecting = false          // prevents concurrent connect() calls
     private var sessionStartTime: Date?
-    private var isAudioGated = false       // true while AI speaks + 2s after, blocks mic sends
+    private var isAudioGated = false       // true while AI speaks + gate after, blocks mic sends
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
@@ -51,6 +52,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
+        guard !isConnected, !isConnecting else { return }
+        isConnecting = true
+        defer { isConnecting = false }
+
         // Dev/test bypass: in DEBUG or TestFlight (sandbox), if a dev OpenAI key is
         // in Keychain, skip the backend session-start (and its free-limit gate) and
         // connect to OpenAI directly. Set the key from Settings → "Dev OpenAI Key".
@@ -421,7 +426,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             // before the server VAD can pick up audio again.
             micGateReleaseTask?.cancel()
             micGateReleaseTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
                 guard let self, !Task.isCancelled else { return }
                 self.isAudioGated = false
             }
@@ -433,7 +438,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 send([
                     "type": "response.create",
                     "response": [
-                        "instructions": "Say in ENGLISH and ONLY say this exact sentence, nothing else, no follow-up: \"Hi! I'm Hoot. What would you like to learn today?\""
+                        "instructions": "Say ONLY this, nothing more: Hi! I'm Hoot. What would you like to learn today?",
+                        "max_output_tokens": NSNumber(value: 25)
                     ] as [String: Any]
                 ])
             }
@@ -521,9 +527,9 @@ TURN-TAKING — CRITICAL RULES:
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSDecimalNumber(string: "0.92"),
+                    "threshold": NSDecimalNumber(string: "0.85"),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 1200),
+                    "silence_duration_ms": NSNumber(value: 1000),
                     "create_response": NSNumber(value: true),
                     "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],

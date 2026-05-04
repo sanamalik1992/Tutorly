@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(TutorSession.self) private var session
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
     @State private var showProSheet = false
     @State private var toast: String?
@@ -56,6 +57,12 @@ struct ContentView: View {
         .onAppear {
             session.autoConnect()
             Task { await AuthService.shared.refreshUser() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                session.reconnectIfNeeded()
+                Task { await AuthService.shared.refreshUser() }
+            }
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
         .sheet(isPresented: $showProSheet) { ProView() }
