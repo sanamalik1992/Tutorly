@@ -12,9 +12,10 @@ struct LoginView: View {
                 Spacer()
 
                 VStack(spacing: 20) {
-                    Image(systemName: "graduationcap.fill")
-                        .font(.system(size: 80))
-                        .foregroundStyle(Theme.accent)
+                    Image("Hoot")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 200, height: 200)
 
                     Text("Tutorly")
                         .font(.system(size: 36, weight: .bold, design: .rounded))

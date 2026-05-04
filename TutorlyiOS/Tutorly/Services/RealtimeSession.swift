@@ -50,6 +50,23 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
+        #if DEBUG
+        // Local testing bypass: if a dev OpenAI key is in Keychain, skip the backend
+        // session-start (and its free-limit gate) and connect to OpenAI directly.
+        // Set the key from Settings → "Dev OpenAI Key" (DEBUG builds only).
+        if let devKey = Keychain.read("openai"), !devKey.isEmpty {
+            await MainActor.run {
+                self.sessionLimitSeconds = 0
+                self.sessionsRemaining = -1
+                self.isFreeLimitReached = false
+            }
+            sessionStartTime = Date()
+            print("[Auth] DEBUG bypass: using stored OpenAI key, skipping backend")
+            await connectWithToken(devKey)
+            return
+        }
+        #endif
+
         guard let jwt = Keychain.appJwt() else {
             await MainActor.run { errorMessage = "Not signed in" }
             return
@@ -62,7 +79,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 self.isFreeLimitReached = false
             }
             sessionStartTime = Date()
+            await connectWithToken(ephemeralToken)
+        } catch let e as FreeLimitError {
+            await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
+        } catch {
+            await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
+        }
+    }
 
+    private func connectWithToken(_ token: String) async {
+        do {
             guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
                 throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"])
             }
@@ -84,14 +110,12 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             try setupAudio()
 
             var req = URLRequest(url: url)
-            req.setValue("Bearer \(ephemeralToken)", forHTTPHeaderField: "Authorization")
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
             print("[WS] connect -> \(req.url?.absoluteString ?? "nil") auth=Bearer ***")
             socket = urlSession.webSocketTask(with: req)
             socket?.resume()
             receive()
-        } catch let e as FreeLimitError {
-            await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
         } catch {
             await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
         }

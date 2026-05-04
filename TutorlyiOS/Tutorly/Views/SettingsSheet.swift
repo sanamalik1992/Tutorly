@@ -7,6 +7,11 @@ struct SettingsSheet: View {
     @State private var showSignOutConfirm = false
     private var auth: AuthService { AuthService.shared }
 
+    #if DEBUG
+    @State private var devKey: String = Keychain.read("openai") ?? ""
+    @State private var devKeySaved: Bool = false
+    #endif
+
     var body: some View {
         NavigationStack {
             Form {
@@ -60,6 +65,33 @@ struct SettingsSheet: View {
                         }
                     }
                 }
+
+                #if DEBUG
+                Section("Dev (DEBUG only)") {
+                    SecureField("OpenAI key (sk-…)", text: $devKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    HStack {
+                        Button("Save") {
+                            let trimmed = devKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if trimmed.isEmpty {
+                                Keychain.delete("openai")
+                            } else {
+                                Keychain.save(trimmed, for: "openai")
+                            }
+                            devKey = trimmed
+                            devKeySaved = true
+                        }
+                        Spacer()
+                        if devKeySaved {
+                            Text("Saved").font(.caption).foregroundStyle(.green)
+                        }
+                    }
+                    Text("When set, RealtimeSession bypasses the backend session-start (and its free-limit gate) and connects to OpenAI directly. DEBUG builds only — production ignores this.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                #endif
 
                 Section {
                     Button(role: .destructive, action: { showSignOutConfirm = true }) {
