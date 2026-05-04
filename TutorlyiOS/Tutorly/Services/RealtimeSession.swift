@@ -38,6 +38,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var micGateReleaseTask: Task<Void, Never>?
+    @ObservationIgnored private var sessionLimitTask: Task<Void, Never>?
     @ObservationIgnored var completedTranscriptTurn: ((TranscriptTurn) -> Void)?
 
     // MARK: - Init
@@ -79,6 +80,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 self.isFreeLimitReached = false
             }
             sessionStartTime = Date()
+            armSessionLimitTimer(seconds: limitSecs)
             await connectWithToken(ephemeralToken)
         } catch let e as FreeLimitError {
             await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
@@ -143,6 +145,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func disconnect() {
         shouldAutoReconnect = false
         micGateReleaseTask?.cancel()
+        sessionLimitTask?.cancel()
+        sessionLimitTask = nil
         isAudioGated = false
         if let startTime = sessionStartTime, let jwt = Keychain.appJwt() {
             let secondsUsed = Int(Date().timeIntervalSince(startTime))
@@ -201,6 +205,20 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["secondsUsed": secondsUsed])
         _ = try? await URLSession.shared.data(for: req)
         print("[Session] reported \(secondsUsed)s to backend")
+    }
+
+    private func armSessionLimitTimer(seconds: Int) {
+        sessionLimitTask?.cancel()
+        guard seconds > 0 else { return }
+        sessionLimitTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            print("[Session] per-session time limit (\(seconds)s) reached — disconnecting")
+            await MainActor.run {
+                self.errorMessage = "Time's up for this session — start another or upgrade for longer."
+            }
+            self.disconnect()
+        }
     }
 
     // MARK: - Audio setup

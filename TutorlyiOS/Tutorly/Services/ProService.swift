@@ -5,9 +5,11 @@ import UIKit
 final class ProService {
     static let shared = ProService()
 
-    // Replace with your Stripe backend endpoint that creates a Checkout Session
-    // and returns a redirect to Stripe's hosted checkout page.
-    static let checkoutURL = "https://your-backend.com/checkout?plan=pro_monthly"
+    enum Plan: String { case monthly, annual, trial }
+
+    // Backend endpoint that creates a Stripe Checkout Session and redirects to it.
+    // Append the plan name as a query param so the backend knows which Price ID to use.
+    static let checkoutBase = "https://tutorly-backend-omega.vercel.app/api/checkout"
 
     private(set) var isPro: Bool
 
@@ -25,9 +27,13 @@ final class ProService {
         UserDefaults.standard.set(false, forKey: "tutorly.isPro")
     }
 
-    func openStripeCheckout() {
-        guard let url = URL(string: Self.checkoutURL) else { return }
+    func openStripeCheckout(plan: Plan = .annual) {
+        guard let url = URL(string: "\(Self.checkoutBase)?plan=\(plan.rawValue)") else { return }
         UIApplication.shared.open(url, options: [:])
+    }
+
+    func startFreeTrial() {
+        openStripeCheckout(plan: .trial)
     }
 
     // Call from TutorlyApp.onOpenURL
