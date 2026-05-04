@@ -26,6 +26,7 @@
 		A100008D /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008C /* AuthService.swift */; };
 		A100008F /* ProService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008E /* ProService.swift */; };
 		A1000095 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000094 /* BackendService.swift */; };
+		A1000099 /* StoreKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000098 /* StoreKitManager.swift */; };
 		A1000091 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000090 /* LoginView.swift */; };
 		A1000093 /* ProView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000092 /* ProView.swift */; };
 /* End PBXBuildFile section */
@@ -53,6 +54,8 @@
 		A100008E /* ProService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProService.swift; sourceTree = "<group>"; };
 		A1000094 /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		A1000096 /* Tutorly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tutorly.entitlements; sourceTree = "<group>"; };
+		A1000098 /* StoreKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitManager.swift; sourceTree = "<group>"; };
+		A100009A /* Tutorly.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Tutorly.storekit; sourceTree = "<group>"; };
 		A1000090 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		A1000092 /* ProView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -89,6 +92,7 @@
 				A100000B /* Assets.xcassets */,
 				A100000D /* Info.plist */,
 				A1000096 /* Tutorly.entitlements */,
+				A100009A /* Tutorly.storekit */,
 				A1000036 /* Preview Content */,
 			);
 			path = Tutorly;
@@ -118,6 +122,7 @@
 				A100008C /* AuthService.swift */,
 				A100008E /* ProService.swift */,
 				A1000094 /* BackendService.swift */,
+				A1000098 /* StoreKitManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -229,6 +234,7 @@
 				A100008D /* AuthService.swift in Sources */,
 				A100008F /* ProService.swift in Sources */,
 				A1000095 /* BackendService.swift in Sources */,
+				A1000099 /* StoreKitManager.swift in Sources */,
 				A1000091 /* LoginView.swift in Sources */,
 				A1000093 /* ProView.swift in Sources */,
 			);
@@ -295,7 +301,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Tutorly/Tutorly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -320,7 +326,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Tutorly/Tutorly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

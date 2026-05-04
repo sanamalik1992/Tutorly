@@ -1,11 +1,10 @@
 import SwiftUI
+import StoreKit
 
 struct ProView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var storeKit = StoreKitManager.shared
     @State private var pro = ProService.shared
-    @State private var selectedPlan: Plan = .annual
-
-    enum Plan { case monthly, annual }
 
     var body: some View {
         ZStack {
@@ -25,8 +24,16 @@ struct ProView: View {
                     VStack(spacing: 28) {
                         hero
                         comparisonTable
-                        planSelector
-                        ctaButtons
+                        productButtons
+                        if let err = storeKit.purchaseError {
+                            Text(err)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 20)
+                        }
+                        restoreButton
+                        legalFooter
                     }
                     .padding(.bottom, 40)
                 }
@@ -39,8 +46,7 @@ struct ProView: View {
 
     private var hero: some View {
         VStack(spacing: 12) {
-            Text("✨")
-                .font(.system(size: 48))
+            Text("✨").font(.system(size: 48))
             Text("Tutorly Pro")
                 .font(.system(size: 30, weight: .bold))
                 .foregroundStyle(Theme.ink)
@@ -57,7 +63,6 @@ struct ProView: View {
 
     private var comparisonTable: some View {
         VStack(spacing: 0) {
-            // Header
             HStack(spacing: 0) {
                 Spacer().frame(width: 110)
                 colHeader("Free")
@@ -70,8 +75,7 @@ struct ProView: View {
 
             row(label: "Sessions/day", values: ["1", "3", "5"])
             row(label: "Mins/session", values: ["5", "5", "20"])
-            row(label: "Daily total",  values: ["5 min", "15 min", "1h 40m"])
-            row(label: "Price",        values: ["—", "—", "£7.99/mo"], last: true)
+            row(label: "Daily total",  values: ["5 min", "15 min", "1h 40m"], last: true)
         }
         .padding(.vertical, 4)
         .background(Theme.bgElev)
@@ -114,83 +118,109 @@ struct ProView: View {
         }
     }
 
-    // MARK: - Plan selector (Monthly / Annual)
+    // MARK: - Product buttons (StoreKit)
 
-    private var planSelector: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                planCard(plan: .monthly, price: "£7.99", period: "/ month", badge: nil)
-                planCard(plan: .annual,  price: "£59.99", period: "/ year",  badge: "Save 37%")
+    private var productButtons: some View {
+        VStack(spacing: 10) {
+            if storeKit.isLoading && storeKit.products.isEmpty {
+                ProgressView().tint(Theme.ink).frame(height: 110)
+            } else if storeKit.products.isEmpty {
+                Text("Subscriptions unavailable. Check your connection or try again later.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.inkMuted)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            } else {
+                if let annual = storeKit.annual {
+                    productButton(annual, primary: true, savings: savingsLabel)
+                }
+                if let monthly = storeKit.monthly {
+                    productButton(monthly, primary: false, savings: nil)
+                }
             }
         }
         .padding(.horizontal, 20)
     }
 
-    private func planCard(plan: Plan, price: String, period: String, badge: String?) -> some View {
-        Button(action: { selectedPlan = plan }) {
-            VStack(spacing: 6) {
-                if let badge {
-                    Text(badge)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Theme.accent)
-                        .clipShape(Capsule())
-                } else {
-                    Spacer().frame(height: 22)
+    private func productButton(_ product: Product, primary: Bool, savings: String?) -> some View {
+        Button {
+            Task { await storeKit.purchase(product) }
+        } label: {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(product.displayName)
+                            .font(.system(size: 16, weight: .semibold))
+                        if let savings {
+                            Text(savings)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(primary ? .white.opacity(0.2) : Theme.accent)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    if let trial = product.freeTrialLabel {
+                        Text("Includes \(trial)")
+                            .font(.system(size: 12))
+                            .foregroundStyle(primary ? .white.opacity(0.85) : Theme.inkSoft)
+                    }
                 }
-                Text(price)
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(Theme.ink)
-                Text(period)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.inkMuted)
+                Spacer()
+                Text(product.displayPrice)
+                    .font(.system(size: 17, weight: .bold))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(selectedPlan == plan ? Theme.accentSoft : Theme.bgElev)
+            .foregroundStyle(primary ? .white : Theme.ink)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(minHeight: 64)
+            .background(primary ? Theme.accent : Theme.bgElev)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(selectedPlan == plan ? Theme.accent : Theme.hairline,
-                                  lineWidth: selectedPlan == plan ? 1.5 : 1)
+                    .strokeBorder(primary ? Color.clear : Theme.hairlineStrong, lineWidth: 1)
             )
         }
+        .disabled(storeKit.purchaseInProgress)
+        .opacity(storeKit.purchaseInProgress ? 0.6 : 1.0)
     }
 
-    // MARK: - CTA
+    private var savingsLabel: String? {
+        guard let monthly = storeKit.monthly, let annual = storeKit.annual else { return nil }
+        let m = (monthly.price as NSDecimalNumber).doubleValue
+        let a = (annual.price as NSDecimalNumber).doubleValue
+        guard m > 0, a > 0 else { return nil }
+        let yearlyAtMonthlyRate = m * 12
+        guard yearlyAtMonthlyRate > a else { return nil }
+        let pct = Int(((yearlyAtMonthlyRate - a) / yearlyAtMonthlyRate * 100).rounded())
+        return "Save \(pct)%"
+    }
 
-    private var ctaButtons: some View {
+    // MARK: - Restore + legal
+
+    private var restoreButton: some View {
+        Button("Restore Purchases") {
+            Task { await storeKit.restore() }
+        }
+        .font(.system(size: 14, weight: .medium))
+        .foregroundStyle(Theme.inkSoft)
+    }
+
+    private var legalFooter: some View {
         VStack(spacing: 10) {
-            Button(action: { pro.startFreeTrial() }) {
-                Text("Start 7-day Free Trial")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 54)
-                    .background(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-            }
-
-            Button(action: { pro.openStripeCheckout(plan: selectedPlan == .annual ? .annual : .monthly) }) {
-                Text("Subscribe \(selectedPlan == .annual ? "Yearly" : "Monthly")")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(Theme.bgElev)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.hairlineStrong, lineWidth: 1))
-            }
-
-            Text("Trial converts to paid after 7 days. Cancel any time.")
-                .font(.system(size: 12))
+            Text("Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in Settings → Apple ID → Subscriptions.")
+                .font(.system(size: 11))
                 .foregroundStyle(Theme.inkMuted)
                 .multilineTextAlignment(.center)
-                .padding(.top, 4)
+            HStack(spacing: 18) {
+                Link("Terms",   destination: URL(string: "https://tutorly-backend-omega.vercel.app/terms")!)
+                Link("Privacy", destination: URL(string: "https://tutorly-backend-omega.vercel.app/privacy")!)
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.accent)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
     }
 
     private var alreadyProOverlay: some View {
