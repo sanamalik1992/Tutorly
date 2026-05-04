@@ -23,7 +23,7 @@ struct ProView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 28) {
                         hero
-                        comparisonTable
+                        benefitsList
                         productButtons
                         if let err = storeKit.purchaseError {
                             Text(err)
@@ -59,23 +59,17 @@ struct ProView: View {
         .padding(.top, 20)
     }
 
-    // MARK: - Comparison table
+    // MARK: - Benefits list
 
-    private var comparisonTable: some View {
+    private var benefitsList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Spacer().frame(width: 110)
-                colHeader("Free")
-                colHeader("Trial", subtitle: "7 days")
-                colHeader("Pro", highlight: true)
-            }
-            .padding(.vertical, 12)
-
-            Divider().background(Theme.hairline)
-
-            row(label: "Sessions/day", values: ["1", "3", "5"])
-            row(label: "Mins/session", values: ["5", "5", "20"])
-            row(label: "Daily total",  values: ["5 min", "15 min", "1h 40m"], last: true)
+            benefit(icon: "timer", text: "Longer, uninterrupted learning sessions")
+            Divider().background(Theme.hairline).padding(.leading, 52)
+            benefit(icon: "calendar", text: "Learn more every day — no hard limits holding you back")
+            Divider().background(Theme.hairline).padding(.leading, 52)
+            benefit(icon: "brain.head.profile", text: "Full access to Hoot with deeper, richer conversations")
+            Divider().background(Theme.hairline).padding(.leading, 52)
+            benefit(icon: "sparkles", text: "Cancel anytime — no commitment required")
         }
         .padding(.vertical, 4)
         .background(Theme.bgElev)
@@ -84,38 +78,19 @@ struct ProView: View {
         .padding(.horizontal, 20)
     }
 
-    private func colHeader(_ title: String, subtitle: String? = nil, highlight: Bool = false) -> some View {
-        VStack(spacing: 2) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(highlight ? Theme.accent : Theme.ink)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.inkMuted)
-            }
+    private func benefit(icon: String, text: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 28)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.ink)
+            Spacer()
         }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func row(label: String, values: [String], last: Bool = false) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Text(label)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.inkSoft)
-                    .frame(width: 110, alignment: .leading)
-                    .padding(.leading, 16)
-                ForEach(Array(values.enumerated()), id: \.offset) { idx, value in
-                    Text(value)
-                        .font(.system(size: 13, weight: idx == 2 ? .semibold : .regular))
-                        .foregroundStyle(idx == 2 ? Theme.ink : Theme.inkSoft)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.vertical, 12)
-            if !last { Divider().background(Theme.hairline).padding(.leading, 16) }
-        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     // MARK: - Product buttons (StoreKit)
@@ -231,9 +206,11 @@ struct ProView: View {
                 Text("You're already Pro!")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(Theme.ink)
-                Text("Enjoy 5 sessions/day, 20 minutes each.")
+                Text("You have full access to longer sessions and unlimited daily learning.")
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.inkSoft)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
                 Button("Close") { dismiss() }
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.accent)
