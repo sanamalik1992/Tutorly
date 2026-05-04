@@ -1,5 +1,6 @@
-import supabase from '../../lib/supabase.js'
+import redis from '../../lib/redis.js'
 import { handleCors, requireAuth } from '../../lib/cors.js'
+import { setUserPro } from '../../lib/user.js'
 
 const PRO_PRODUCTS = new Set(['com.tutorly.pro.monthly', 'com.tutorly.pro.annual'])
 
@@ -12,42 +13,32 @@ export default async function handler(req, res) {
 
   try {
     const userId = payload.sub
-    const {
-      productID,
-      transactionID,
-      originalTransactionID,
-      purchaseDate,
-      environment = 'Production',
-    } = req.body
+    const { productID, transactionID, originalTransactionID, purchaseDate, environment = 'Production' } = req.body ?? {}
 
     if (!productID || !transactionID) {
       return res.status(400).json({ error: 'productID and transactionID required' })
     }
-
     if (!PRO_PRODUCTS.has(productID)) {
       return res.status(400).json({ error: `Unknown product: ${productID}` })
     }
 
-    // Persist transaction (ignore duplicate submissions)
-    const { error: txnErr } = await supabase.from('tutorly_iap').upsert(
-      {
-        transaction_id:          transactionID,
-        original_transaction_id: originalTransactionID ?? transactionID,
-        user_id:                 userId,
-        product_id:              productID,
-        purchase_date:           purchaseDate ? new Date(purchaseDate).toISOString() : new Date().toISOString(),
+    // Persist transaction record (iap:{txnId} → JSON)
+    const iapKey = `iap:${transactionID}`
+    const existing = await redis.get(iapKey)
+    if (!existing) {
+      await redis.set(iapKey, JSON.stringify({
+        transactionID,
+        originalTransactionID: originalTransactionID ?? transactionID,
+        userId,
+        productID,
+        purchaseDate:  purchaseDate ?? new Date().toISOString(),
         environment,
-      },
-      { onConflict: 'transaction_id' }
-    )
-    if (txnErr) throw txnErr
+        verifiedAt:    new Date().toISOString(),
+      }))
+    }
 
-    // Grant Pro status
-    const { error: userErr } = await supabase
-      .from('tutorly_users')
-      .update({ is_pro: true })
-      .eq('id', userId)
-    if (userErr) throw userErr
+    // Grant Pro — idempotent
+    await setUserPro(userId)
 
     console.log(`[iap/verify] Pro granted — user=${userId} product=${productID} txn=${transactionID} env=${environment}`)
     return res.json({ ok: true, isPro: true })

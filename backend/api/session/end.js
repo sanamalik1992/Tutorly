@@ -1,5 +1,5 @@
-import supabase from '../../lib/supabase.js'
 import { handleCors, requireAuth } from '../../lib/cors.js'
+import { endSession } from '../../lib/user.js'
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return
@@ -9,26 +9,7 @@ export default async function handler(req, res) {
   if (!payload) return
 
   try {
-    const userId      = payload.sub
-    const secondsUsed = Number(req.body?.secondsUsed ?? 0)
-
-    // Close the most recent open session for this user
-    const { data: session } = await supabase
-      .from('tutorly_sessions')
-      .select('id')
-      .eq('user_id', userId)
-      .is('ended_at', null)
-      .order('started_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (session) {
-      await supabase
-        .from('tutorly_sessions')
-        .update({ ended_at: new Date().toISOString(), seconds_used: secondsUsed })
-        .eq('id', session.id)
-    }
-
+    await endSession(payload.sub, Number(req.body?.secondsUsed ?? 0))
     return res.json({ ok: true })
   } catch (err) {
     console.error('[session/end]', err)
