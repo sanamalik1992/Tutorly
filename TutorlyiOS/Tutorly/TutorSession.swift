@@ -22,11 +22,9 @@ final class TutorSession {
         connect()
     }
 
-    /// Call when the app returns to foreground — tears down any stale socket and reconnects.
+    /// Call when the app returns to foreground. Pings the live socket to verify
+    /// it's truly alive; if the ping fails (or there's no connection), reconnects.
     func reconnectIfNeeded() {
-        if realtime.isConnected { return }
-        // If socket is stale (isConnected false), clean up and reconnect.
-        realtime.disconnect()
-        connect()
+        realtime.validateConnection()
     }
 }

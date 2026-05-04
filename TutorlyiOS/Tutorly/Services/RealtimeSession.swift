@@ -32,9 +32,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var shouldAutoReconnect = false
-    private var isConnecting = false          // prevents concurrent connect() calls
+    private var isConnecting = false
+    private var isGreetingResponse = false    // true during the first (greeting) response
     private var sessionStartTime: Date?
-    private var isAudioGated = false       // true while AI speaks + gate after, blocks mic sends
+    private var isAudioGated = false
     private var transcriptBuffer = ""
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
@@ -128,6 +129,29 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// Ping the live socket. If it's dead (or not connected), disconnect cleanly
+    /// then reconnect. Safe to call every time the app returns to foreground.
+    func validateConnection() {
+        guard isConnected, let socket else {
+            // Either never connected or already marked disconnected — just reconnect.
+            if !isConnecting {
+                disconnect()
+                Task { await connect() }
+            }
+            return
+        }
+        socket.sendPing { [weak self] error in
+            guard let self else { return }
+            if error != nil {
+                print("[WS] ping failed (\(error!.localizedDescription)) — reconnecting")
+                self.disconnect()
+                Task { await self.connect() }
+            } else {
+                print("[WS] ping OK")
+            }
+        }
+    }
+
     func toggleMute() {
         isMuted.toggle()
         if isMuted { voiceState = .idle }
@@ -165,6 +189,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         voiceState = .idle
         hasConfiguredSession = false
         hasSentGreeting = false
+        isGreetingResponse = false
     }
 
     // MARK: - Backend session
@@ -373,6 +398,26 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 configureSession()
                 hasConfiguredSession = true
             }
+            // Fire the greeting 2s after session.created so our session.update
+            // (voice, instructions) has been accepted before the model speaks.
+            // Using a delay here instead of session.updated avoids firing twice
+            // if the server sends session.updated for both the initial state and
+            // our update.
+            if !hasSentGreeting {
+                hasSentGreeting = true
+                isGreetingResponse = true
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard let self, self.isConnected else { return }
+                    self.send([
+                        "type": "response.create",
+                        "response": [
+                            "instructions": "Say ONLY this one sentence and stop: Hi! I'm Hoot. What would you like to learn today?",
+                            "max_output_tokens": NSNumber(value: 30)
+                        ] as [String: Any]
+                    ])
+                }
+            }
 
         case "response.created":
             isAssistantResponding = true
@@ -422,27 +467,19 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
             Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
-            // Keep mic gated for 2 more seconds so room echo from the speaker fades
-            // before the server VAD can pick up audio again.
+            // Greeting gets a longer gate (5s) because it's very short — echo lingers
+            // right up against the end of the response. Normal responses get 2.5s.
+            let gateNs: UInt64 = isGreetingResponse ? 5_000_000_000 : 2_500_000_000
+            isGreetingResponse = false
             micGateReleaseTask?.cancel()
             micGateReleaseTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                try? await Task.sleep(nanoseconds: gateNs)
                 guard let self, !Task.isCancelled else { return }
                 self.isAudioGated = false
             }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
-            if !hasSentGreeting {
-                hasSentGreeting = true
-                send([
-                    "type": "response.create",
-                    "response": [
-                        "instructions": "Say ONLY this, nothing more: Hi! I'm Hoot. What would you like to learn today?",
-                        "max_output_tokens": NSNumber(value: 25)
-                    ] as [String: Any]
-                ])
-            }
 
         case "input_audio_buffer.speech_started":
             Task { @MainActor in self.voiceState = .listening }
@@ -521,7 +558,7 @@ TURN-TAKING — CRITICAL RULES:
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "echo",
+                "voice": "ash",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
