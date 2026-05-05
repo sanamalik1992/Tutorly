@@ -452,7 +452,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             transcriptBuffer = ""
             responseTimeoutTask?.cancel()
             responseTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
                 guard let self, !Task.isCancelled else { return }
                 await MainActor.run {
                     self.isAssistantResponding = false
@@ -596,7 +596,7 @@ TURN-TAKING — CRITICAL RULES:
                     "create_response": NSNumber(value: true),
                     "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],
-                "max_response_output_tokens": NSNumber(value: 400)
+                "max_response_output_tokens": "inf"
             ] as [String: Any]
         ])
     }
