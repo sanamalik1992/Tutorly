@@ -61,9 +61,9 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
-                // Clean disconnect so audio engine and socket are fully torn down.
-                // autoConnect on .active will rebuild everything fresh.
-                session.disconnect()
+                // Tear down audio and socket but keep the greeting flag so the user
+                // isn't re-introduced to Hoot every time they switch apps.
+                session.backgroundDisconnect()
             case .active:
                 Task { await AuthService.shared.refreshUser() }
                 session.autoConnect()
@@ -157,6 +157,7 @@ struct ContentView: View {
     private var statusLabel: String {
         guard session.realtime.isConnected else { return "Connecting…" }
         if session.realtime.isMuted { return "Muted — tap to unmute" }
+        if session.realtime.isMicGated { return "Just a moment…" }
         if session.realtime.voiceState == .speaking { return "Speaking — tap to interrupt" }
         if session.realtime.isThinking { return "Thinking… tap to cancel" }
         return "Listening…"

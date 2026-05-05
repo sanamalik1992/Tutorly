@@ -17,6 +17,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var sessionsRemaining: Int = -1
     var isFreeLimitReached: Bool = false
     var sessionLimitSeconds: Int = 0
+    var isMicGated: Bool { isAudioGated }
 
     // Private
     private var socket: URLSessionWebSocketTask?
@@ -171,7 +172,11 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func disconnect() {
+    /// Disconnect the session and tear down audio.
+    /// - Parameter resetGreeting: Pass `false` when backgrounding so returning to the
+    ///   app skips the introduction and opens the mic immediately. Pass `true` (default)
+    ///   for sign-out or explicit session termination so the next session greets fresh.
+    func disconnect(resetGreeting: Bool = true) {
         shouldAutoReconnect = false
         micGateReleaseTask?.cancel()
         responseTimeoutTask?.cancel()
@@ -189,8 +194,6 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         // Fully tear down audio so the next connect() starts completely fresh.
-        // Skipping this caused the "no voice on return from background" bug where
-        // the engine was suspended by iOS but we didn't rebuild it on reconnect.
         engine.inputNode.removeTap(onBus: 0)
         player.stop()
         if engine.isRunning { engine.stop() }
@@ -201,7 +204,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         isConnected = false
         voiceState = .idle
         hasConfiguredSession = false
-        hasSentGreeting = false
+        if resetGreeting {
+            hasSentGreeting = false
+        }
         isGreetingResponse = false
     }
 
@@ -337,7 +342,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func scheduleAudio(_ pcm: Data) {
-        guard pcm.count >= 2, !isCancellingResponse, engine.isRunning else { return }
+        guard pcm.count >= 2, !isCancellingResponse else { return }
+        if !engine.isRunning { try? engine.start() }
         print("[Audio] scheduleAudio \(pcm.count)B engine=\(engine.isRunning) playing=\(player.isPlaying)")
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
