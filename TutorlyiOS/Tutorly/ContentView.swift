@@ -59,9 +59,16 @@ struct ContentView: View {
             Task { await AuthService.shared.refreshUser() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                session.reconnectIfNeeded()
+            switch phase {
+            case .background:
+                // Clean disconnect so audio engine and socket are fully torn down.
+                // autoConnect on .active will rebuild everything fresh.
+                session.disconnect()
+            case .active:
                 Task { await AuthService.shared.refreshUser() }
+                session.autoConnect()
+            default:
+                break
             }
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }

@@ -40,6 +40,7 @@ struct ProView: View {
             }
         }
         .overlay { if pro.isPro { alreadyProOverlay } }
+        .task { if storeKit.products.isEmpty { await storeKit.loadProducts() } }
     }
 
     // MARK: - Hero
@@ -100,11 +101,16 @@ struct ProView: View {
             if storeKit.isLoading && storeKit.products.isEmpty {
                 ProgressView().tint(Theme.ink).frame(height: 110)
             } else if storeKit.products.isEmpty {
-                Text("Subscriptions unavailable. Check your connection or try again later.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.inkMuted)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
+                VStack(spacing: 12) {
+                    Text("Subscription options are being set up — check back soon.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.inkMuted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                    Button("Retry") { Task { await storeKit.loadProducts() } }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
             } else {
                 if let annual = storeKit.annual {
                     productButton(annual, primary: true, savings: savingsLabel)

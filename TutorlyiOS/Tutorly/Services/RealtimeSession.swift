@@ -174,9 +174,13 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     func disconnect() {
         shouldAutoReconnect = false
         micGateReleaseTask?.cancel()
+        responseTimeoutTask?.cancel()
+        responseTimeoutTask = nil
         sessionLimitTask?.cancel()
         sessionLimitTask = nil
         isAudioGated = false
+        isAssistantResponding = false
+        isCancellingResponse = false
         if let startTime = sessionStartTime, let jwt = Keychain.appJwt() {
             let secondsUsed = Int(Date().timeIntervalSince(startTime))
             Task { await self.endBackendSession(jwt: jwt, secondsUsed: secondsUsed) }
@@ -184,7 +188,16 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         sessionStartTime = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        // Fully tear down audio so the next connect() starts completely fresh.
+        // Skipping this caused the "no voice on return from background" bug where
+        // the engine was suspended by iOS but we didn't rebuild it on reconnect.
+        engine.inputNode.removeTap(onBus: 0)
+        player.stop()
         if engine.isRunning { engine.stop() }
+        if isEngineGraphBuilt {
+            engine.detach(player)
+            isEngineGraphBuilt = false
+        }
         isConnected = false
         voiceState = .idle
         hasConfiguredSession = false
@@ -324,7 +337,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func scheduleAudio(_ pcm: Data) {
-        guard pcm.count >= 2, !isCancellingResponse else { return }
+        guard pcm.count >= 2, !isCancellingResponse, engine.isRunning else { return }
         print("[Audio] scheduleAudio \(pcm.count)B engine=\(engine.isRunning) playing=\(player.isPlaying)")
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
@@ -407,15 +420,22 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 hasSentGreeting = true
                 isGreetingResponse = true
                 Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    // Wait for session.update to be accepted before triggering the greeting.
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
                     guard let self, self.isConnected else { return }
+                    // Inject a "Hello" user turn so the model greets naturally from the
+                    // session instructions rather than a prescriptive inline prompt.
+                    // This avoids the double-greeting bug where the model would say
+                    // "Hi I'm Hoot." — pause — VAD fires — "What would you like to learn?"
                     self.send([
-                        "type": "response.create",
-                        "response": [
-                            "instructions": "Say ONLY this one sentence and stop: Hi! I'm Hoot. What would you like to learn today?",
-                            "max_output_tokens": NSNumber(value: 30)
+                        "type": "conversation.item.create",
+                        "item": [
+                            "type": "message",
+                            "role": "user",
+                            "content": [["type": "input_text", "text": "Hello"] as [String: Any]]
                         ] as [String: Any]
                     ])
+                    self.send(["type": "response.create"])
                 }
             }
 
@@ -558,7 +578,7 @@ TURN-TAKING — CRITICAL RULES:
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "ash",
+                "voice": "echo",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
