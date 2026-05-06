@@ -38,8 +38,28 @@ struct ContentView: View {
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
 
+                    // Interrupt button — only visible while Hoot is speaking/thinking
+                    if session.realtime.voiceState == .speaking || session.realtime.isThinking {
+                        Button(action: { session.cancelResponse() }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 13, weight: .bold))
+                                Text("Stop")
+                                    .font(.system(size: 15, weight: .semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 13)
+                            .background(Color.red.opacity(0.85), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    }
+
                     Spacer()
                 }
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: session.realtime.voiceState)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: session.realtime.isThinking)
 
                 // Transcript
                 transcriptArea

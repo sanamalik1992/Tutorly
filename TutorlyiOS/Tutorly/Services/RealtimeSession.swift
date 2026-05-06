@@ -495,7 +495,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
             // Greeting gets a longer gate (5s) because it's very short — echo lingers
             // right up against the end of the response. Normal responses get 2.5s.
-            let gateNs: UInt64 = isGreetingResponse ? 5_000_000_000 : 2_500_000_000
+            let gateNs: UInt64 = isGreetingResponse ? 5_000_000_000 : 4_000_000_000
             isGreetingResponse = false
             micGateReleaseTask?.cancel()
             micGateReleaseTask = Task { [weak self] in
@@ -572,11 +572,12 @@ When the student is exploring an idea, ask a thoughtful question to guide their 
 Vary the rhythm — sometimes explain, sometimes ask, sometimes encourage.
 
 TURN-TAKING — CRITICAL RULES:
-- After asking a question, STOP IMMEDIATELY. Do NOT answer your own question.
-- NEVER guess or assume what the student would say. Wait for their real reply.
-- If you hear unclear audio, ambient noise, breathing, or silence — stay silent and keep waiting.
-- Do NOT respond to what sounds like a non-English fragment — that is almost certainly noise, not the student.
-- Each of your turns must end and yield the floor to the student.
+- After asking a question, STOP COMPLETELY AND WAIT. Say nothing more. Do not add a hint, do not rephrase, do not fill silence.
+- NEVER answer your own question. If you find yourself about to speak after asking something, stop.
+- Wait as long as it takes for the student to reply — silence is normal while they think.
+- If you hear only breathing, ambient noise, or unclear sounds, treat it as silence and keep waiting. Do NOT respond to it.
+- Only speak again when you hear clear, deliberate speech that is obviously the student's answer.
+- Each turn ends with you yielding the floor completely — no follow-up, no prompting.
 """
 
         send([
@@ -592,7 +593,7 @@ TURN-TAKING — CRITICAL RULES:
                     "type": "server_vad",
                     "threshold": NSDecimalNumber(string: "0.85"),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 1000),
+                    "silence_duration_ms": NSNumber(value: 1500),
                     "create_response": NSNumber(value: true),
                     "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],
