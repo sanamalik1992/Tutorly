@@ -12,13 +12,34 @@ struct ContentView: View {
             Theme.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Nav bar
-                HStack {
-                    Text("Tutorly").font(.system(size: 22, weight: .bold, design: .rounded))
-                    Spacer()
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gear")
-                            .font(.system(size: 20, weight: .semibold))
+                // Nav bar — Interrupt (leading) · Tutorly (centre) · gear (trailing)
+                ZStack {
+                    Text("Tutorly")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .frame(maxWidth: .infinity)
+
+                    HStack {
+                        Button(action: { session.cancelResponse() }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "hand.raised.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Interrupt")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.inkSoft)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gear")
+                                .font(.system(size: 20, weight: .semibold))
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -38,30 +59,8 @@ struct ContentView: View {
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
 
-                    // Interrupt button — visible for the full duration of Hoot's response
-                    // (isHootSpeaking stays true from response.created to response.done,
-                    //  unlike voiceState which briefly flips idle when audio generation ends)
-                    if session.realtime.isHootSpeaking {
-                        Button(action: { session.cancelResponse() }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "hand.raised.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                Text("Interrupt")
-                                    .font(.system(size: 14, weight: .medium))
-                            }
-                            .foregroundStyle(Theme.inkSoft)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .transition(.scale(scale: 0.9).combined(with: .opacity))
-                    }
-
                     Spacer()
                 }
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: session.realtime.isHootSpeaking)
 
                 // Transcript
                 transcriptArea
