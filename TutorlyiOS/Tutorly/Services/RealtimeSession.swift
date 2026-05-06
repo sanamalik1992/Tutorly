@@ -160,13 +160,27 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func cancelResponse() {
-        guard isAssistantResponding else { return }
+        // Always stop buffered audio — isAssistantResponding is false once response.done
+        // fires from the server, but the player buffer can still hold several seconds
+        // of audio. Without this, pressing Interrupt after generation ends does nothing.
+        let wasStillGenerating = isAssistantResponding
+
         isCancellingResponse = true
         micGateReleaseTask?.cancel()
-        isAudioGated = false             // user is interrupting — open mic right away
-        send(["type": "response.cancel"])
+        isAudioGated = false
         player.stop()
         isAssistantResponding = false
+
+        // Only send response.cancel if the server is still generating — sending it
+        // after response.done would cause a server error.
+        if wasStillGenerating {
+            send(["type": "response.cancel"])
+            // isCancellingResponse will be reset when the server's response.done arrives
+        } else {
+            // response.done already fired so no server event is coming to reset the flag
+            isCancellingResponse = false
+        }
+
         Task { @MainActor in
             self.voiceState = .idle
             self.isThinking = false
@@ -586,7 +600,7 @@ TURN-TAKING — CRITICAL RULES:
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "echo",
+                "voice": "verse",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
