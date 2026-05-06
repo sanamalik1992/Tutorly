@@ -18,6 +18,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var isFreeLimitReached: Bool = false
     var sessionLimitSeconds: Int = 0
     var isMicGated: Bool { isAudioGated }
+    var isHootSpeaking: Bool { isAssistantResponding }
 
     // Private
     private var socket: URLSessionWebSocketTask?

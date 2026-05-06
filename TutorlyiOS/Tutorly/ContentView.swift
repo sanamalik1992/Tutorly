@@ -38,28 +38,30 @@ struct ContentView: View {
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
 
-                    // Interrupt button — only visible while Hoot is speaking/thinking
-                    if session.realtime.voiceState == .speaking || session.realtime.isThinking {
+                    // Interrupt button — visible for the full duration of Hoot's response
+                    // (isHootSpeaking stays true from response.created to response.done,
+                    //  unlike voiceState which briefly flips idle when audio generation ends)
+                    if session.realtime.isHootSpeaking {
                         Button(action: { session.cancelResponse() }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "stop.fill")
-                                    .font(.system(size: 13, weight: .bold))
-                                Text("Stop")
-                                    .font(.system(size: 15, weight: .semibold))
+                            HStack(spacing: 6) {
+                                Image(systemName: "hand.raised.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Interrupt")
+                                    .font(.system(size: 14, weight: .medium))
                             }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 28)
-                            .padding(.vertical, 13)
-                            .background(Color.red.opacity(0.85), in: Capsule())
+                            .foregroundStyle(Theme.inkSoft)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
-                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                        .transition(.scale(scale: 0.9).combined(with: .opacity))
                     }
 
                     Spacer()
                 }
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: session.realtime.voiceState)
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: session.realtime.isThinking)
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: session.realtime.isHootSpeaking)
 
                 // Transcript
                 transcriptArea
