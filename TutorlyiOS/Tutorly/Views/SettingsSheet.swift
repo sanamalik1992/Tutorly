@@ -7,9 +7,6 @@ struct SettingsSheet: View {
     @State private var showSignOutConfirm = false
     private var auth: AuthService { AuthService.shared }
 
-    @State private var devKey: String = Keychain.read("openai") ?? ""
-    @State private var devKeySaved: Bool = false
-
     var body: some View {
         NavigationStack {
             Form {
@@ -61,33 +58,6 @@ struct SettingsSheet: View {
                                     .foregroundStyle(user.sessionsRemaining == 0 ? .red : .secondary)
                             }
                         }
-                    }
-                }
-
-                if Keychain.allowDevBypass {
-                    Section("Dev (TestFlight / DEBUG only)") {
-                        SecureField("OpenAI key (sk-…)", text: $devKey)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        HStack {
-                            Button("Save") {
-                                let trimmed = devKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if trimmed.isEmpty {
-                                    Keychain.delete("openai")
-                                } else {
-                                    Keychain.save(trimmed, for: "openai")
-                                }
-                                devKey = trimmed
-                                devKeySaved = true
-                            }
-                            Spacer()
-                            if devKeySaved {
-                                Text("Saved").font(.caption).foregroundStyle(.green)
-                            }
-                        }
-                        Text("When set, RealtimeSession bypasses the backend session-start (and its free-limit gate) and connects to OpenAI directly. Visible in DEBUG and TestFlight builds — production App Store ignores this.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
 
