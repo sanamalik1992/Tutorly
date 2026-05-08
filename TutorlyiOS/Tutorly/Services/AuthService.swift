@@ -59,20 +59,21 @@ final class AuthService {
                 return
             }
 
-            guard let json   = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let token  = json["token"] as? String,
-                  let uDict  = json["user"]  as? [String: Any] else {
+            guard let json  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let token = (json["token"] as? String) ?? (json["jwt"] as? String) else {
                 await MainActor.run { authError = "Unexpected server response" }
                 return
             }
 
+            // Support both nested {"user":{...}} and flat {id, name, ...} response shapes
+            let uDict = (json["user"] as? [String: Any]) ?? json
             let user = TutorlyUser(
-                id:                uDict["id"]    as? String ?? UUID().uuidString,
-                name:              uDict["name"]  as? String ?? fullName ?? "Student",
-                email:             uDict["email"] as? String,
-                isPro:             uDict["isPro"] as? Bool   ?? false,
-                sessionsRemaining: 3,
-                secondsToday:      0
+                id:                uDict["id"]                as? String ?? UUID().uuidString,
+                name:              uDict["name"]              as? String ?? fullName ?? "Student",
+                email:             uDict["email"]             as? String,
+                isPro:             uDict["isPro"]             as? Bool   ?? false,
+                sessionsRemaining: uDict["sessionsRemaining"] as? Int    ?? 0,
+                secondsToday:      uDict["secondsToday"]      as? Int    ?? 0
             )
 
             Keychain.saveAppJwt(token)
@@ -112,18 +113,18 @@ final class AuthService {
             }
 
             var base = currentUser ?? TutorlyUser(id: "", name: "Student", email: nil,
-                                                   isPro: false, sessionsRemaining: 3, secondsToday: 0)
-            if let u = json["user"] as? [String: Any] {
-                let usage = json["usage"] as? [String: Any]
-                base = TutorlyUser(
-                    id:                u["id"]    as? String ?? base.id,
-                    name:              u["name"]  as? String ?? base.name,
-                    email:             u["email"] as? String ?? base.email,
-                    isPro:             u["isPro"] as? Bool   ?? base.isPro,
-                    sessionsRemaining: usage?["sessionsRemaining"] as? Int ?? base.sessionsRemaining,
-                    secondsToday:      usage?["secondsToday"]      as? Int ?? base.secondsToday
-                )
-            }
+                                                   isPro: false, sessionsRemaining: 0, secondsToday: 0)
+            // Support nested {"user":{...},"usage":{...}} AND flat {id, isPro, sessionsRemaining, ...}
+            let uDict    = (json["user"]  as? [String: Any]) ?? json
+            let usageDict = (json["usage"] as? [String: Any]) ?? json
+            base = TutorlyUser(
+                id:                uDict["id"]                    as? String ?? base.id,
+                name:              uDict["name"]                  as? String ?? base.name,
+                email:             uDict["email"]                 as? String ?? base.email,
+                isPro:             uDict["isPro"]                 as? Bool   ?? base.isPro,
+                sessionsRemaining: usageDict["sessionsRemaining"] as? Int    ?? base.sessionsRemaining,
+                secondsToday:      usageDict["secondsToday"]      as? Int    ?? base.secondsToday
+            )
 
             persist(base)
             await MainActor.run { self.currentUser = base }

@@ -17,6 +17,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     var sessionsRemaining: Int = -1
     var isFreeLimitReached: Bool = false
     var sessionLimitSeconds: Int = 0
+    var isMicGated: Bool { isAudioGated }
+    var isHootSpeaking: Bool { isAssistantResponding }
 
     // Private
     private var socket: URLSessionWebSocketTask?
@@ -32,12 +34,19 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var shouldAutoReconnect = false
+    private var isConnecting = false
+    private var isGreetingResponse = false    // true during the first (greeting) response
     private var sessionStartTime: Date?
-    private var isAudioGated = false       // true while AI speaks + 2s after, blocks mic sends
+    private var isAudioGated = false
     private var transcriptBuffer = ""
+    // Tracks audio playback so the mic gate starts only after Hoot stops speaking,
+    // not at response.done (which fires while audio is still buffered in the player).
+    private var pendingAudioBuffers: Int = 0
+    private var isResponseDone = false
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var micGateReleaseTask: Task<Void, Never>?
+    @ObservationIgnored private var sessionLimitTask: Task<Void, Never>?
     @ObservationIgnored var completedTranscriptTurn: ((TranscriptTurn) -> Void)?
 
     // MARK: - Init
@@ -50,6 +59,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Public
 
     func connect() async {
+        guard !isConnected, !isConnecting else { return }
+        isConnecting = true
+        defer { isConnecting = false }
+
         guard let jwt = Keychain.appJwt() else {
             await MainActor.run { errorMessage = "Not signed in" }
             return
@@ -62,21 +75,21 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 self.isFreeLimitReached = false
             }
             sessionStartTime = Date()
+            armSessionLimitTimer(seconds: limitSecs)
+            await connectWithToken(ephemeralToken)
+        } catch let e as FreeLimitError {
+            await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
+        } catch {
+            await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
+        }
+    }
 
+    private func connectWithToken(_ token: String) async {
+        do {
             guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
                 throw NSError(domain: "Realtime", code: 9, userInfo: [NSLocalizedDescriptionKey: "Realtime URL invalid"])
             }
-            let status: AVAudioSession.RecordPermission
-            if #available(iOS 17.0, *) {
-                switch AVAudioApplication.shared.recordPermission {
-                case .undetermined: status = .undetermined
-                case .denied: status = .denied
-                case .granted: status = .granted
-                @unknown default: status = .undetermined
-                }
-            } else {
-                status = AVAudioSession.sharedInstance().recordPermission
-            }
+            let status = AVAudioApplication.shared.recordPermission
             if status == .denied { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
             let micOK = status == .granted ? true : await requestMicPermission()
             guard micOK else { await MainActor.run { errorMessage = "Enable microphone in Settings" }; return }
@@ -84,16 +97,37 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             try setupAudio()
 
             var req = URLRequest(url: url)
-            req.setValue("Bearer \(ephemeralToken)", forHTTPHeaderField: "Authorization")
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
             print("[WS] connect -> \(req.url?.absoluteString ?? "nil") auth=Bearer ***")
             socket = urlSession.webSocketTask(with: req)
             socket?.resume()
             receive()
-        } catch let e as FreeLimitError {
-            await MainActor.run { self.isFreeLimitReached = true; self.errorMessage = e.message }
         } catch {
             await MainActor.run { errorMessage = "Connect failed: \(error.localizedDescription)" }
+        }
+    }
+
+    /// Ping the live socket. If it's dead (or not connected), disconnect cleanly
+    /// then reconnect. Safe to call every time the app returns to foreground.
+    func validateConnection() {
+        guard isConnected, let socket else {
+            // Either never connected or already marked disconnected — just reconnect.
+            if !isConnecting {
+                disconnect()
+                Task { await connect() }
+            }
+            return
+        }
+        socket.sendPing { [weak self] error in
+            guard let self else { return }
+            if error != nil {
+                print("[WS] ping failed (\(error!.localizedDescription)) — reconnecting")
+                self.disconnect()
+                Task { await self.connect() }
+            } else {
+                print("[WS] ping OK")
+            }
         }
     }
 
@@ -103,23 +137,49 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func cancelResponse() {
-        guard isAssistantResponding else { return }
+        // Always stop buffered audio — isAssistantResponding is false once response.done
+        // fires from the server, but the player buffer can still hold several seconds
+        // of audio. Without this, pressing Interrupt after generation ends does nothing.
+        let wasStillGenerating = isAssistantResponding
+
         isCancellingResponse = true
         micGateReleaseTask?.cancel()
-        isAudioGated = false             // user is interrupting — open mic right away
-        send(["type": "response.cancel"])
+        isAudioGated = false
+        pendingAudioBuffers = 0   // prevents stale completion callbacks from reopening gate
+        isResponseDone = false
         player.stop()
         isAssistantResponding = false
+
+        // Only send response.cancel if the server is still generating — sending it
+        // after response.done would cause a server error.
+        if wasStillGenerating {
+            send(["type": "response.cancel"])
+            // isCancellingResponse will be reset when the server's response.done arrives
+        } else {
+            // response.done already fired so no server event is coming to reset the flag
+            isCancellingResponse = false
+        }
+
         Task { @MainActor in
             self.voiceState = .idle
             self.isThinking = false
         }
     }
 
-    func disconnect() {
+    /// Disconnect the session and tear down audio.
+    /// - Parameter resetGreeting: Pass `false` when backgrounding so returning to the
+    ///   app skips the introduction and opens the mic immediately. Pass `true` (default)
+    ///   for sign-out or explicit session termination so the next session greets fresh.
+    func disconnect(resetGreeting: Bool = true) {
         shouldAutoReconnect = false
         micGateReleaseTask?.cancel()
+        responseTimeoutTask?.cancel()
+        responseTimeoutTask = nil
+        sessionLimitTask?.cancel()
+        sessionLimitTask = nil
         isAudioGated = false
+        isAssistantResponding = false
+        isCancellingResponse = false
         if let startTime = sessionStartTime, let jwt = Keychain.appJwt() {
             let secondsUsed = Int(Date().timeIntervalSince(startTime))
             Task { await self.endBackendSession(jwt: jwt, secondsUsed: secondsUsed) }
@@ -127,11 +187,23 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         sessionStartTime = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        // Fully tear down audio so the next connect() starts completely fresh.
+        pendingAudioBuffers = 0
+        isResponseDone = false
+        engine.inputNode.removeTap(onBus: 0)
+        player.stop()
         if engine.isRunning { engine.stop() }
+        if isEngineGraphBuilt {
+            engine.detach(player)
+            isEngineGraphBuilt = false
+        }
         isConnected = false
         voiceState = .idle
         hasConfiguredSession = false
-        hasSentGreeting = false
+        if resetGreeting {
+            hasSentGreeting = false
+        }
+        isGreetingResponse = false
     }
 
     // MARK: - Backend session
@@ -177,6 +249,20 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["secondsUsed": secondsUsed])
         _ = try? await URLSession.shared.data(for: req)
         print("[Session] reported \(secondsUsed)s to backend")
+    }
+
+    private func armSessionLimitTimer(seconds: Int) {
+        sessionLimitTask?.cancel()
+        guard seconds > 0 else { return }
+        sessionLimitTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            print("[Session] per-session time limit (\(seconds)s) reached — disconnecting")
+            await MainActor.run {
+                self.errorMessage = "Time's up for this session — start another or upgrade for longer."
+            }
+            self.disconnect()
+        }
     }
 
     // MARK: - Audio setup
@@ -253,6 +339,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     private func scheduleAudio(_ pcm: Data) {
         guard pcm.count >= 2, !isCancellingResponse else { return }
+        if !engine.isRunning { try? engine.start() }
         print("[Audio] scheduleAudio \(pcm.count)B engine=\(engine.isRunning) playing=\(player.isPlaying)")
         let frames = AVAudioFrameCount(pcm.count / 2)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
@@ -263,20 +350,26 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             let out = buf.floatChannelData![0]
             for i in 0..<Int(frames) { out[i] = Float(i16[i]) / 32767.0 }
         }
-        player.scheduleBuffer(buf, completionHandler: nil)
+        pendingAudioBuffers += 1
+        // .dataPlayedBack fires when this buffer's samples have actually left the speaker,
+        // so we know precisely when Hoot stops talking and can start the mic gate.
+        player.scheduleBuffer(buf, at: nil, options: [],
+                              completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.pendingAudioBuffers > 0 else { return }
+                self.pendingAudioBuffers -= 1
+                if self.pendingAudioBuffers == 0, self.isResponseDone {
+                    self.startPostPlaybackGate()
+                }
+            }
+        }
         if !player.isPlaying { player.play() }
     }
 
     private func requestMicPermission() async -> Bool {
         await withCheckedContinuation { cont in
-            if #available(iOS 17.0, *) {
-                AVAudioApplication.requestRecordPermission { granted in
-                    cont.resume(returning: granted)
-                }
-            } else {
-                AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                    cont.resume(returning: granted)
-                }
+            AVAudioApplication.requestRecordPermission { granted in
+                cont.resume(returning: granted)
             }
         }
     }
@@ -291,9 +384,15 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 if case .string(let s) = msg { self.handle(s) }
                 self.receive()
             case .failure(let e):
-                Task { @MainActor in
-                    self.errorMessage = "WebSocket: \(e.localizedDescription)"
-                    self.isConnected = false
+                print("[WS] receive ended: \(e.localizedDescription)")
+                Task { @MainActor in self.isConnected = false }
+                // If the socket drops mid-session, trigger reconnect here too
+                // (didCloseWith handles clean closes; network drops come through failure)
+                guard self.shouldAutoReconnect else { return }
+                Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !self.isConnected else { return }
+                    await self.connect()
                 }
             }
         }
@@ -320,6 +419,33 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
                 configureSession()
                 hasConfiguredSession = true
             }
+            // Fire the greeting 2s after session.created so our session.update
+            // (voice, instructions) has been accepted before the model speaks.
+            // Using a delay here instead of session.updated avoids firing twice
+            // if the server sends session.updated for both the initial state and
+            // our update.
+            if !hasSentGreeting {
+                hasSentGreeting = true
+                isGreetingResponse = true
+                Task { [weak self] in
+                    // Wait for session.update to be accepted before triggering the greeting.
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    guard let self, self.isConnected else { return }
+                    // Inject a "Hello" user turn so the model greets naturally from the
+                    // session instructions rather than a prescriptive inline prompt.
+                    // This avoids the double-greeting bug where the model would say
+                    // "Hi I'm Hoot." — pause — VAD fires — "What would you like to learn?"
+                    self.send([
+                        "type": "conversation.item.create",
+                        "item": [
+                            "type": "message",
+                            "role": "user",
+                            "content": [["type": "input_text", "text": "Hello"] as [String: Any]]
+                        ] as [String: Any]
+                    ])
+                    self.send(["type": "response.create"])
+                }
+            }
 
         case "response.created":
             isAssistantResponding = true
@@ -328,7 +454,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             transcriptBuffer = ""
             responseTimeoutTask?.cancel()
             responseTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
                 guard let self, !Task.isCancelled else { return }
                 await MainActor.run {
                     self.isAssistantResponding = false
@@ -369,26 +495,14 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
             Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
-            // Keep mic gated for 2 more seconds so room echo from the speaker fades
-            // before the server VAD can pick up audio again.
-            micGateReleaseTask?.cancel()
-            micGateReleaseTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard let self, !Task.isCancelled else { return }
-                self.isAudioGated = false
-            }
+            // Gate release is driven by actual audio playback (startPostPlaybackGate).
+            // If all audio chunks have already played out (rare for short responses),
+            // start the gate immediately; otherwise the last buffer's completion fires it.
+            isResponseDone = true
+            if pendingAudioBuffers == 0 { startPostPlaybackGate() }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
-            if !hasSentGreeting {
-                hasSentGreeting = true
-                send([
-                    "type": "response.create",
-                    "response": [
-                        "instructions": "ENGLISH ONLY. Introduce yourself as Hoot, an AI tutor. Say: 'Hi! I'm Hoot, your AI tutor. What would you like to learn today?' Exactly that. English only."
-                    ] as [String: Any]
-                ])
-            }
 
         case "input_audio_buffer.speech_started":
             Task { @MainActor in self.voiceState = .listening }
@@ -427,6 +541,22 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    // MARK: - Post-playback mic gate
+
+    // Called when Hoot's audio has finished playing through the speaker.
+    // A short echo-decay pause keeps room echo from triggering the VAD.
+    private func startPostPlaybackGate() {
+        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 1_500_000_000
+        isGreetingResponse = false
+        isResponseDone = false
+        micGateReleaseTask?.cancel()
+        micGateReleaseTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: gateNs)
+            guard let self, !Task.isCancelled else { return }
+            self.isAudioGated = false
+        }
+    }
+
     // MARK: - Session configuration
 
     private func configureSession() {
@@ -434,15 +564,33 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         Task { @MainActor in self.liveCaption = "" }
 
         let instructions = """
-LANGUAGE — ABSOLUTE RULE: You must speak and respond in ENGLISH ONLY. \
-Every single word you say must be English. Never use Spanish, French, or any \
-other language, regardless of the student's language or device locale. \
-If the student speaks another language, reply in English anyway. \
-This overrides everything else.
+LANGUAGE — ABSOLUTE RULE — HIGHEST PRIORITY:
+You speak ENGLISH ONLY. 100% of every word must be English.
+You are STRICTLY PROHIBITED from using Spanish, French, German, or any non-English language.
+Never use a non-English word — not even one. Never mix languages.
+Ignore the student's locale, accent, or any audio that sounds non-English.
+If you ever accidentally start a non-English word, stop and continue in English.
+If the input audio is unclear, garbled, or sounds like background noise, do NOT respond — wait silently for clear English speech.
+This rule overrides everything else.
 
-You are Hoot, a friendly AI voice tutor. Keep every reply to 1-2 short \
-sentences, then ask a follow-up question to keep the conversation going. \
+IDENTITY:
+You are Hoot, a friendly AI voice tutor.
+Only introduce yourself ONCE at the very start of the conversation. Never re-introduce yourself or say "I'm Hoot" again later.
 You are voice-only — you cannot see the student.
+
+CONVERSATION STYLE:
+Keep things conversational and flowing. Mix detailed explanations with engaging questions.
+When teaching a concept, give a thorough but clear explanation (3-5 sentences) before asking a check-in question.
+When the student is exploring an idea, ask a thoughtful question to guide their thinking.
+Vary the rhythm — sometimes explain, sometimes ask, sometimes encourage.
+
+TURN-TAKING — CRITICAL RULES:
+- After asking a question, STOP COMPLETELY AND WAIT. Say nothing more. Do not add a hint, do not rephrase, do not fill silence.
+- NEVER answer your own question. If you find yourself about to speak after asking something, stop.
+- Wait as long as it takes for the student to reply — silence is normal while they think.
+- If you hear only breathing, ambient noise, or unclear sounds, treat it as silence and keep waiting. Do NOT respond to it.
+- Only speak again when you hear clear, deliberate speech that is obviously the student's answer.
+- Each turn ends with you yielding the floor completely — no follow-up, no prompting.
 """
 
         send([
@@ -450,17 +598,19 @@ You are voice-only — you cannot see the student.
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "alloy",
+                "voice": "echo",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSNumber(value: 0.7),
+                    "threshold": NSDecimalNumber(string: "0.85"),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 500)
+                    "silence_duration_ms": NSNumber(value: 1500),
+                    "create_response": NSNumber(value: true),
+                    "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],
-                "max_response_output_tokens": NSNumber(value: 300)
+                "max_response_output_tokens": "inf"
             ] as [String: Any]
         ])
     }
@@ -476,7 +626,8 @@ You are voice-only — you cannot see the student.
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         print("[WS] closed code=\(closeCode.rawValue)")
         hasConfiguredSession = false
-        hasSentGreeting = false
+        // Preserve hasSentGreeting across auto-reconnects so we don't introduce
+        // ourselves twice when the socket drops mid-conversation.
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
         guard shouldAutoReconnect else { return }
         // Server closed the socket (timeout / network change) — reconnect automatically

@@ -1,40 +1,22 @@
 import Foundation
-import UIKit
 
+/// Thin compatibility layer kept so existing call sites (`ProService.shared.isPro`)
+/// continue to work. The actual source of truth for entitlement is StoreKitManager.
 @Observable
 final class ProService {
     static let shared = ProService()
 
-    // Replace with your Stripe backend endpoint that creates a Checkout Session
-    // and returns a redirect to Stripe's hosted checkout page.
-    static let checkoutURL = "https://your-backend.com/checkout?plan=pro_monthly"
+    private let storeKit = StoreKitManager.shared
 
-    private(set) var isPro: Bool
-
-    init() {
-        isPro = UserDefaults.standard.bool(forKey: "tutorly.isPro")
+    // True if either local StoreKit entitlement OR backend flag says Pro.
+    // This keeps things working even if one source hasn't synced yet.
+    var isPro: Bool {
+        storeKit.isSubscribed || (AuthService.shared.currentUser?.isPro ?? false)
     }
 
-    func activatePro() {
-        isPro = true
-        UserDefaults.standard.set(true, forKey: "tutorly.isPro")
-    }
-
-    func clearPro() {
-        isPro = false
-        UserDefaults.standard.set(false, forKey: "tutorly.isPro")
-    }
-
-    func openStripeCheckout() {
-        guard let url = URL(string: Self.checkoutURL) else { return }
-        UIApplication.shared.open(url, options: [:])
-    }
-
-    // Call from TutorlyApp.onOpenURL
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "tutorly" else { return }
-        if url.host == "pro-success" {
-            activatePro()
-        }
+        // No-op for IAP — Apple manages purchase confirmation in-app.
+        // Reserved for any other future deep links (share, etc.).
+        _ = url
     }
 }

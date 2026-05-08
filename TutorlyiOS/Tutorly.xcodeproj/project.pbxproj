@@ -25,9 +25,10 @@
 		A100008B /* WelcomeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008A /* WelcomeSheet.swift */; };
 		A100008D /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008C /* AuthService.swift */; };
 		A100008F /* ProService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100008E /* ProService.swift */; };
-		A1000095 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000094 /* BackendService.swift */; };
+		A1000099 /* StoreKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000098 /* StoreKitManager.swift */; };
 		A1000091 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000090 /* LoginView.swift */; };
 		A1000093 /* ProView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000092 /* ProView.swift */; };
+		A100009D /* AIConsentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100009C /* AIConsentView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,10 +52,12 @@
 		A100008A /* WelcomeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeSheet.swift; sourceTree = "<group>"; };
 		A100008C /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		A100008E /* ProService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProService.swift; sourceTree = "<group>"; };
-		A1000094 /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		A1000096 /* Tutorly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tutorly.entitlements; sourceTree = "<group>"; };
+		A1000098 /* StoreKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitManager.swift; sourceTree = "<group>"; };
+		A100009A /* Tutorly.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Tutorly.storekit; sourceTree = "<group>"; };
 		A1000090 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		A1000092 /* ProView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProView.swift; sourceTree = "<group>"; };
+		A100009C /* AIConsentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIConsentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,6 +92,7 @@
 				A100000B /* Assets.xcassets */,
 				A100000D /* Info.plist */,
 				A1000096 /* Tutorly.entitlements */,
+				A100009A /* Tutorly.storekit */,
 				A1000036 /* Preview Content */,
 			);
 			path = Tutorly;
@@ -117,7 +121,7 @@
 				A100001D /* RealtimeSession.swift */,
 				A100008C /* AuthService.swift */,
 				A100008E /* ProService.swift */,
-				A1000094 /* BackendService.swift */,
+				A1000098 /* StoreKitManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -132,6 +136,7 @@
 				A1000088 /* SettingsSheet.swift */,
 				A1000090 /* LoginView.swift */,
 				A1000092 /* ProView.swift */,
+				A100009C /* AIConsentView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -228,9 +233,10 @@
 				A1000089 /* SettingsSheet.swift in Sources */,
 				A100008D /* AuthService.swift in Sources */,
 				A100008F /* ProService.swift in Sources */,
-				A1000095 /* BackendService.swift in Sources */,
+				A1000099 /* StoreKitManager.swift in Sources */,
 				A1000091 /* LoginView.swift in Sources */,
 				A1000093 /* ProView.swift in Sources */,
+				A100009D /* AIConsentView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -295,7 +301,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Tutorly/Tutorly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 17;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -320,7 +326,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Tutorly/Tutorly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 17;
 				DEVELOPMENT_ASSET_PATHS = "\"Tutorly/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

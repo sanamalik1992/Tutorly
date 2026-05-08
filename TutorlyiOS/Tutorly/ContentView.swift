@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(TutorSession.self) private var session
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
     @State private var showProSheet = false
     @State private var toast: String?
@@ -11,13 +12,34 @@ struct ContentView: View {
             Theme.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Nav bar
-                HStack {
-                    Text("Tutorly").font(.system(size: 22, weight: .bold, design: .rounded))
-                    Spacer()
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gear")
-                            .font(.system(size: 20, weight: .semibold))
+                // Nav bar — Interrupt (leading) · Tutorly (centre) · gear (trailing)
+                ZStack {
+                    Text("Tutorly")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .frame(maxWidth: .infinity)
+
+                    HStack {
+                        Button(action: { session.cancelResponse() }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "hand.raised.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Interrupt")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.inkSoft)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gear")
+                                .font(.system(size: 20, weight: .semibold))
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -56,6 +78,19 @@ struct ContentView: View {
         .onAppear {
             session.autoConnect()
             Task { await AuthService.shared.refreshUser() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                // Tear down audio and socket but keep the greeting flag so the user
+                // isn't re-introduced to Hoot every time they switch apps.
+                session.backgroundDisconnect()
+            case .active:
+                Task { await AuthService.shared.refreshUser() }
+                session.autoConnect()
+            default:
+                break
+            }
         }
         .sheet(isPresented: $showSettings) { SettingsSheet() }
         .sheet(isPresented: $showProSheet) { ProView() }
@@ -143,6 +178,7 @@ struct ContentView: View {
     private var statusLabel: String {
         guard session.realtime.isConnected else { return "Connecting…" }
         if session.realtime.isMuted { return "Muted — tap to unmute" }
+        if session.realtime.isMicGated { return "Just a moment…" }
         if session.realtime.voiceState == .speaking { return "Speaking — tap to interrupt" }
         if session.realtime.isThinking { return "Thinking… tap to cancel" }
         return "Listening…"

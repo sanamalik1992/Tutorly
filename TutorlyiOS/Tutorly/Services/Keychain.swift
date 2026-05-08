@@ -44,4 +44,15 @@ extension Keychain {
     static func saveAppJwt(_ token: String) { save(token, for: "appJwt") }
     static func appJwt() -> String?         { read("appJwt") }
     static func deleteAppJwt()              { delete("appJwt") }
+
+    /// True for DEBUG builds (Xcode runs) AND TestFlight sandbox builds, but false
+    /// for production App Store builds. Used to gate the dev OpenAI-key bypass so
+    /// it's available in TestFlight testing without shipping in production.
+    static var allowDevBypass: Bool {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }
 }

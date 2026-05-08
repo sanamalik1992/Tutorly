@@ -71,7 +71,7 @@ struct VoiceDock: View {
                 } else {
                     let remaining = session.realtime.sessionsRemaining
                     if remaining >= 0 {
-                        Text("\(remaining) / 3 sessions left today")
+                        Text(remaining == 1 ? "1 session left today" : "\(remaining) sessions left today")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(remaining == 0 ? .red : Theme.inkSoft)
                     }
