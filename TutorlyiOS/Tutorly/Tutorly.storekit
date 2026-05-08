@@ -1,0 +1,80 @@
+{
+  "identifier" : "TUTORLY-IAP-CONFIG",
+  "nonRenewingSubscriptions" : [],
+  "products" : [],
+  "settings" : {
+    "_compatibilityTimeRate" : 1,
+    "_locale" : "en_GB",
+    "_storefront" : "GBR",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "tutorly_pro_group",
+      "localizations" : [
+        {
+          "description" : "Tutorly Pro subscription",
+          "displayName" : "Tutorly Pro",
+          "locale" : "en_GB"
+        }
+      ],
+      "name" : "Tutorly Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "7.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "tutorly_pro_monthly_internal",
+          "introductoryOffer" : {
+            "internalID" : "tutorly_pro_monthly_intro",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P7D"
+          },
+          "localizations" : [
+            {
+              "description" : "Tutorly Pro — billed monthly",
+              "displayName" : "Pro Monthly",
+              "locale" : "en_GB"
+            }
+          ],
+          "productID" : "com.tutorly.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Tutorly Pro Monthly",
+          "subscriptionGroupID" : "tutorly_pro_group",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "59.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "tutorly_pro_annual_internal",
+          "introductoryOffer" : {
+            "internalID" : "tutorly_pro_annual_intro",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P7D"
+          },
+          "localizations" : [
+            {
+              "description" : "Tutorly Pro — billed yearly (save ~37%)",
+              "displayName" : "Pro Yearly",
+              "locale" : "en_GB"
+            }
+          ],
+          "productID" : "com.tutorly.pro.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Tutorly Pro Annual",
+          "subscriptionGroupID" : "tutorly_pro_group",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}
