@@ -546,7 +546,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // Called when Hoot's audio has finished playing through the speaker.
     // A short echo-decay pause keeps room echo from triggering the VAD.
     private func startPostPlaybackGate() {
-        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 1_500_000_000
+        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 400_000_000
         isGreetingResponse = false
         isResponseDone = false
         micGateReleaseTask?.cancel()
@@ -604,9 +604,9 @@ TURN-TAKING — CRITICAL RULES:
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
                 "turn_detection": [
                     "type": "server_vad",
-                    "threshold": NSDecimalNumber(string: "0.85"),
+                    "threshold": NSDecimalNumber(string: "0.5"),
                     "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 1500),
+                    "silence_duration_ms": NSNumber(value: 700),
                     "create_response": NSNumber(value: true),
                     "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],
