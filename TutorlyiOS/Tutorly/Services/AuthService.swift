@@ -126,9 +126,10 @@ final class AuthService {
                 secondsToday:      usageDict["secondsToday"]      as? Int    ?? base.secondsToday
             )
 
-            persist(base)
-            await MainActor.run { self.currentUser = base }
-            print("[Auth] refreshed isPro=\(base.isPro) sessionsLeft=\(base.sessionsRemaining)")
+            let updated = base
+            persist(updated)
+            await MainActor.run { self.currentUser = updated }
+            print("[Auth] refreshed isPro=\(updated.isPro) sessionsLeft=\(updated.sessionsRemaining)")
             return true
 
         } catch {
