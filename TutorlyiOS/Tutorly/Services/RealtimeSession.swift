@@ -304,8 +304,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: hwFmt) { [weak self] buf, _ in
-            // Gate mic while AI is speaking AND for 2s after it finishes.
-            // This prevents room echo from triggering the server VAD after playback ends.
+            // Mic stays gated only while Hoot is actively speaking. After playback ends,
+            // a tiny 150ms safety margin runs (hardware AEC handles the rest).
             guard let self, self.isConnected, !self.isMuted, !self.isAudioGated,
                   let conv = self.converter else { return }
             if buf.frameLength > 0, Int.random(in: 0..<20) == 0 {
@@ -544,9 +544,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // MARK: - Post-playback mic gate
 
     // Called when Hoot's audio has finished playing through the speaker.
-    // A short echo-decay pause keeps room echo from triggering the VAD.
+    // Hardware AEC (voice processing) handles the actual echo; this is just a
+    // tiny safety margin to let the audio output buffer fully drain.
     private func startPostPlaybackGate() {
-        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 400_000_000
+        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 150_000_000
         isGreetingResponse = false
         isResponseDone = false
         micGateReleaseTask?.cancel()
@@ -602,11 +603,12 @@ TURN-TAKING — CRITICAL RULES:
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
+                // semantic_vad lets the model itself decide when the user has finished
+                // a thought — much better at catching short / one-word answers than
+                // server_vad's silence-duration approach. eagerness:high = fastest.
                 "turn_detection": [
-                    "type": "server_vad",
-                    "threshold": NSDecimalNumber(string: "0.5"),
-                    "prefix_padding_ms": NSNumber(value: 300),
-                    "silence_duration_ms": NSNumber(value: 700),
+                    "type": "semantic_vad",
+                    "eagerness": "high",
                     "create_response": NSNumber(value: true),
                     "interrupt_response": NSNumber(value: true)
                 ] as [String: Any],
