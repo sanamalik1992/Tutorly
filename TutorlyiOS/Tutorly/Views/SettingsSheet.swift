@@ -137,9 +137,11 @@ struct SettingsSheet: View {
     // MARK: - Helpers
 
     private var trialStatusLabel: String {
-        let days = storeKit.trialDaysRemaining
-        if days <= 0 { return "Free Trial — last day" }
-        return days == 1 ? "Free Trial — 1 day remaining" : "Free Trial — \(days) days remaining"
+        guard let expiry = storeKit.trialExpiryDate else { return "Free Trial" }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium   // e.g. "May 15, 2026"
+        formatter.timeStyle = .none
+        return "Free Trial — ends \(formatter.string(from: expiry))"
     }
 
     // MARK: - Delete account
