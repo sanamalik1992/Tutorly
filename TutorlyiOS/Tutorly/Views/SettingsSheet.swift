@@ -5,6 +5,10 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showProSheet = false
     @State private var showSignOutConfirm = false
+    @State private var showDeleteConfirm = false
+    @State private var isDeleting = false
+    @State private var showDeleteError = false
+    @AppStorage("aiConsentGiven") private var aiConsentGiven = false
     private var auth: AuthService { AuthService.shared }
 
     var body: some View {
@@ -70,12 +74,32 @@ struct SettingsSheet: View {
                         }
                     }
                 }
+
+                // Account deletion — required by Apple Guideline 5.1.1(v)
+                Section("Account") {
+                    if isDeleting {
+                        HStack(spacing: 12) {
+                            ProgressView().tint(.red)
+                            Text("Deleting account…")
+                                .foregroundStyle(.secondary)
+                                .font(.system(size: 15))
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            Text("Delete Account")
+                        }
+                        .disabled(isDeleting)
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .disabled(isDeleting)
                 }
             }
             .confirmationDialog("Sign out of Tutorly?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
@@ -86,7 +110,60 @@ struct SettingsSheet: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
+            .confirmationDialog("Delete account?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("Delete Account", role: .destructive) {
+                    Task { await deleteAccount() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will permanently delete your account and all associated data. This action cannot be undone.")
+            }
+            .alert("Couldn't delete account", isPresented: $showDeleteError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Please check your connection and try again, or contact support at tutorlyAI_app@outlook.com.")
+            }
         }
         .sheet(isPresented: $showProSheet) { ProView() }
+    }
+
+    // MARK: - Delete account
+
+    private func deleteAccount() async {
+        guard let jwt = Keychain.appJwt() else {
+            await MainActor.run { showDeleteError = true }
+            return
+        }
+
+        await MainActor.run { isDeleting = true }
+
+        do {
+            guard let url = URL(string: "https://tutorly-backend-omega.vercel.app/api/user/delete") else {
+                await MainActor.run { isDeleting = false; showDeleteError = true }
+                return
+            }
+            var req = URLRequest(url: url, timeoutInterval: 15)
+            req.httpMethod = "DELETE"
+            req.setValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+
+            let (_, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                await MainActor.run { isDeleting = false; showDeleteError = true }
+                return
+            }
+
+            // Success — clear all local state, reset consent, sign out
+            await MainActor.run {
+                aiConsentGiven = false
+                session.disconnect()
+                auth.signOut()
+                // isDeleting stays true until the view disappears with the session
+            }
+            print("[Auth] account deleted successfully")
+
+        } catch {
+            await MainActor.run { isDeleting = false; showDeleteError = true }
+            print("[Auth] account deletion error: \(error.localizedDescription)")
+        }
     }
 }
