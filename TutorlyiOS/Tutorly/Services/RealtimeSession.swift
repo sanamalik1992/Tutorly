@@ -31,6 +31,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
     private var isAssistantResponding = false
     private var hasConfiguredSession = false
+    private var awaitingSessionUpdate = false   // true after we send session.update, until ack
     private var hasSentGreeting = false
     private var isCancellingResponse = false
     private var shouldAutoReconnect = false
@@ -200,6 +201,7 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         isConnected = false
         voiceState = .idle
         hasConfiguredSession = false
+        awaitingSessionUpdate = false
         if resetGreeting {
             hasSentGreeting = false
         }
@@ -416,35 +418,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             shouldAutoReconnect = true
             Task { @MainActor in self.isConnected = true }
             if !hasConfiguredSession {
-                configureSession()
+                configureSession()           // sends session.update
                 hasConfiguredSession = true
-            }
-            // Fire the greeting 2s after session.created so our session.update
-            // (voice, instructions) has been accepted before the model speaks.
-            // Using a delay here instead of session.updated avoids firing twice
-            // if the server sends session.updated for both the initial state and
-            // our update.
-            if !hasSentGreeting {
-                hasSentGreeting = true
-                isGreetingResponse = true
-                Task { [weak self] in
-                    // Wait for session.update to be accepted before triggering the greeting.
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    guard let self, self.isConnected else { return }
-                    // Inject a "Hello" user turn so the model greets naturally from the
-                    // session instructions rather than a prescriptive inline prompt.
-                    // This avoids the double-greeting bug where the model would say
-                    // "Hi I'm Hoot." — pause — VAD fires — "What would you like to learn?"
-                    self.send([
-                        "type": "conversation.item.create",
-                        "item": [
-                            "type": "message",
-                            "role": "user",
-                            "content": [["type": "input_text", "text": "Hello"] as [String: Any]]
-                        ] as [String: Any]
-                    ])
-                    self.send(["type": "response.create"])
-                }
+                awaitingSessionUpdate = true // gate greeting until ack arrives
             }
 
         case "response.created":
@@ -503,6 +479,23 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
+            // Trigger the greeting only AFTER our config (voice=echo, instructions, VAD)
+            // has been acknowledged by the server. Otherwise the model can start the
+            // first response on the default voice (alloy/feminine), which is then
+            // locked for the rest of the session.
+            if awaitingSessionUpdate {
+                awaitingSessionUpdate = false
+                if !hasSentGreeting {
+                    hasSentGreeting = true
+                    isGreetingResponse = true
+                    send([
+                        "type": "response.create",
+                        "response": [
+                            "instructions": "Say exactly this sentence and nothing else, in your normal English voice: \"Hi, I am your AI tutor Hoot. What can I help you with today?\""
+                        ] as [String: Any]
+                    ])
+                }
+            }
 
         case "input_audio_buffer.speech_started":
             Task { @MainActor in self.voiceState = .listening }
@@ -547,7 +540,9 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     // Hardware AEC (voice processing) handles the actual echo; this is just a
     // tiny safety margin to let the audio output buffer fully drain.
     private func startPostPlaybackGate() {
-        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 150_000_000
+        // Greeting gets a slightly longer gate (500ms) so the audio session has fully
+        // settled before mic opens; subsequent turns use 150ms.
+        let gateNs: UInt64 = isGreetingResponse ? 500_000_000 : 150_000_000
         isGreetingResponse = false
         isResponseDone = false
         micGateReleaseTask?.cancel()
@@ -628,6 +623,7 @@ TURN-TAKING — CRITICAL RULES:
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         print("[WS] closed code=\(closeCode.rawValue)")
         hasConfiguredSession = false
+        awaitingSessionUpdate = false
         // Preserve hasSentGreeting across auto-reconnects so we don't introduce
         // ourselves twice when the socket drops mid-conversation.
         Task { @MainActor in self.isConnected = false; self.voiceState = .idle }
