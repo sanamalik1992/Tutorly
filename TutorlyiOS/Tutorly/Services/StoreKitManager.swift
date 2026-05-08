@@ -15,7 +15,7 @@ final class StoreKitManager {
     private(set) var isLoading = false
     private(set) var purchaseInProgress = false
     private(set) var isInTrial = false
-    private(set) var trialDaysRemaining: Int = 0
+    private(set) var trialExpiryDate: Date?
     var purchaseError: String?
 
     @ObservationIgnored private var updatesTask: Task<Void, Never>?
@@ -92,20 +92,19 @@ final class StoreKitManager {
     private func refreshEntitlements() async {
         var ids = Set<String>()
         var inTrial = false
-        var daysLeft = 0
+        var expiry: Date?
         for await result in Transaction.currentEntitlements {
             guard case .verified(let txn) = result else { continue }
             guard txn.revocationDate == nil else { continue }
             ids.insert(txn.productID)
-            if txn.offerType == .introductory, let expiry = txn.expirationDate {
+            if txn.offerType == .introductory, let exp = txn.expirationDate {
                 inTrial = true
-                let days = Calendar.current.dateComponents([.day], from: Date(), to: expiry).day ?? 0
-                daysLeft = max(0, days)
+                expiry = exp
             }
         }
         purchasedProductIDs = ids
         isInTrial = inTrial
-        trialDaysRemaining = daysLeft
+        trialExpiryDate = expiry
     }
 
     private func listenForTransactionUpdates() async {
