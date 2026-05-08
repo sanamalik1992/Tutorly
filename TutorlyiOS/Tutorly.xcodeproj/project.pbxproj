@@ -28,6 +28,7 @@
 		A1000099 /* StoreKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000098 /* StoreKitManager.swift */; };
 		A1000091 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000090 /* LoginView.swift */; };
 		A1000093 /* ProView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000092 /* ProView.swift */; };
+		A100009D /* AIConsentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100009C /* AIConsentView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +57,7 @@
 		A100009A /* Tutorly.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Tutorly.storekit; sourceTree = "<group>"; };
 		A1000090 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		A1000092 /* ProView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProView.swift; sourceTree = "<group>"; };
+		A100009C /* AIConsentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIConsentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,6 +136,7 @@
 				A1000088 /* SettingsSheet.swift */,
 				A1000090 /* LoginView.swift */,
 				A1000092 /* ProView.swift */,
+				A100009C /* AIConsentView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -233,6 +236,7 @@
 				A1000099 /* StoreKitManager.swift in Sources */,
 				A1000091 /* LoginView.swift in Sources */,
 				A1000093 /* ProView.swift in Sources */,
+				A100009D /* AIConsentView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
