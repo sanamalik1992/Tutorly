@@ -39,6 +39,10 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
     private var sessionStartTime: Date?
     private var isAudioGated = false
     private var transcriptBuffer = ""
+    // Tracks audio playback so the mic gate starts only after Hoot stops speaking,
+    // not at response.done (which fires while audio is still buffered in the player).
+    private var pendingAudioBuffers: Int = 0
+    private var isResponseDone = false
     @ObservationIgnored private var pendingStartContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var responseTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var micGateReleaseTask: Task<Void, Never>?
@@ -151,6 +155,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         isCancellingResponse = true
         micGateReleaseTask?.cancel()
         isAudioGated = false
+        pendingAudioBuffers = 0   // prevents stale completion callbacks from reopening gate
+        isResponseDone = false
         player.stop()
         isAssistantResponding = false
 
@@ -192,6 +198,8 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         // Fully tear down audio so the next connect() starts completely fresh.
+        pendingAudioBuffers = 0
+        isResponseDone = false
         engine.inputNode.removeTap(onBus: 0)
         player.stop()
         if engine.isRunning { engine.stop() }
@@ -352,7 +360,19 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             let out = buf.floatChannelData![0]
             for i in 0..<Int(frames) { out[i] = Float(i16[i]) / 32767.0 }
         }
-        player.scheduleBuffer(buf, completionHandler: nil)
+        pendingAudioBuffers += 1
+        // .dataPlayedBack fires when this buffer's samples have actually left the speaker,
+        // so we know precisely when Hoot stops talking and can start the mic gate.
+        player.scheduleBuffer(buf, at: nil, options: [],
+                              completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.pendingAudioBuffers > 0 else { return }
+                self.pendingAudioBuffers -= 1
+                if self.pendingAudioBuffers == 0, self.isResponseDone {
+                    self.startPostPlaybackGate()
+                }
+            }
+        }
         if !player.isPlaying { player.play() }
     }
 
@@ -491,16 +511,11 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             pendingStartContinuation?.resume()
             pendingStartContinuation = nil
             Task { @MainActor in self.isThinking = false; self.voiceState = .idle }
-            // Greeting gets a longer gate (5s) because it's very short — echo lingers
-            // right up against the end of the response. Normal responses get 2.5s.
-            let gateNs: UInt64 = isGreetingResponse ? 5_000_000_000 : 4_000_000_000
-            isGreetingResponse = false
-            micGateReleaseTask?.cancel()
-            micGateReleaseTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: gateNs)
-                guard let self, !Task.isCancelled else { return }
-                self.isAudioGated = false
-            }
+            // Gate release is driven by actual audio playback (startPostPlaybackGate).
+            // If all audio chunks have already played out (rare for short responses),
+            // start the gate immediately; otherwise the last buffer's completion fires it.
+            isResponseDone = true
+            if pendingAudioBuffers == 0 { startPostPlaybackGate() }
 
         case "session.updated":
             print("[Config] session.update ACCEPTED")
@@ -539,6 +554,22 @@ final class RealtimeSession: NSObject, URLSessionWebSocketDelegate {
             Task { @MainActor in self.voiceState = .idle; self.isThinking = false }
 
         default: break
+        }
+    }
+
+    // MARK: - Post-playback mic gate
+
+    // Called when Hoot's audio has finished playing through the speaker.
+    // A short echo-decay pause keeps room echo from triggering the VAD.
+    private func startPostPlaybackGate() {
+        let gateNs: UInt64 = isGreetingResponse ? 4_000_000_000 : 1_500_000_000
+        isGreetingResponse = false
+        isResponseDone = false
+        micGateReleaseTask?.cancel()
+        micGateReleaseTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: gateNs)
+            guard let self, !Task.isCancelled else { return }
+            self.isAudioGated = false
         }
     }
 
@@ -583,7 +614,7 @@ TURN-TAKING — CRITICAL RULES:
             "session": [
                 "modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": "verse",
+                "voice": "echo",
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": ["model": "whisper-1", "language": "en"] as [String: Any],
