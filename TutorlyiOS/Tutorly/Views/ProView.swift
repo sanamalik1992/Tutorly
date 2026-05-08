@@ -2,6 +2,11 @@ import SwiftUI
 import StoreKit
 
 struct ProView: View {
+    /// True when shown as the mandatory onboarding gate. Hides the close button and
+    /// shows trial-specific messaging. The view dismisses itself by becoming unreachable
+    /// once proService.isPro flips true after a successful purchase.
+    var isGated: Bool = false
+
     @Environment(\.dismiss) private var dismiss
     @State private var storeKit = StoreKitManager.shared
     @State private var pro = ProService.shared
@@ -11,14 +16,16 @@ struct ProView: View {
             Theme.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                HStack {
-                    Spacer()
-                    Button("Close") { dismiss() }
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.inkSoft)
+                if !isGated {
+                    HStack {
+                        Spacer()
+                        Button("Close") { dismiss() }
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.inkSoft)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 28) {
@@ -35,11 +42,12 @@ struct ProView: View {
                         restoreButton
                         legalFooter
                     }
+                    .padding(.top, isGated ? 52 : 0)
                     .padding(.bottom, 40)
                 }
             }
         }
-        .overlay { if pro.isPro { alreadyProOverlay } }
+        .overlay { if pro.isPro && !isGated { alreadyProOverlay } }
         .task { if storeKit.products.isEmpty { await storeKit.loadProducts() } }
     }
 
@@ -47,15 +55,31 @@ struct ProView: View {
 
     private var hero: some View {
         VStack(spacing: 12) {
-            Text("✨").font(.system(size: 48))
-            Text("Tutorly Pro")
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(Theme.ink)
-            Text("Longer sessions, more daily learning time, and full access to Hoot.")
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.inkSoft)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+            if isGated {
+                Image("Hoot")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 100, height: 100)
+                    .padding(.bottom, 4)
+                Text("Try Tutorly Free")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.ink)
+                Text("7 days free. Cancel any time before\nyour trial ends and you won't be charged.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.inkSoft)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            } else {
+                Text("✨").font(.system(size: 48))
+                Text("Tutorly Pro")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(Theme.ink)
+                Text("Longer sessions, more daily learning time, and full access to Hoot.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.inkSoft)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
         }
         .padding(.top, 20)
     }
@@ -64,13 +88,23 @@ struct ProView: View {
 
     private var benefitsList: some View {
         VStack(spacing: 0) {
-            benefit(icon: "timer", text: "Longer, uninterrupted learning sessions")
-            Divider().background(Theme.hairline).padding(.leading, 52)
-            benefit(icon: "calendar", text: "Learn more every day — no hard limits holding you back")
-            Divider().background(Theme.hairline).padding(.leading, 52)
-            benefit(icon: "brain.head.profile", text: "Full access to Hoot with deeper, richer conversations")
-            Divider().background(Theme.hairline).padding(.leading, 52)
-            benefit(icon: "sparkles", text: "Cancel anytime — no commitment required")
+            if isGated {
+                benefit(icon: "gift.fill",          text: "3 free sessions per day for 7 days")
+                Divider().background(Theme.hairline).padding(.leading, 52)
+                benefit(icon: "timer",              text: "5 minutes per session — focused and effective")
+                Divider().background(Theme.hairline).padding(.leading, 52)
+                benefit(icon: "arrow.clockwise",    text: "Resets every midnight so you start fresh each day")
+                Divider().background(Theme.hairline).padding(.leading, 52)
+                benefit(icon: "sparkles",           text: "After 7 days, Pro begins — cancel any time before")
+            } else {
+                benefit(icon: "timer",              text: "Longer, uninterrupted learning sessions")
+                Divider().background(Theme.hairline).padding(.leading, 52)
+                benefit(icon: "calendar",           text: "Learn more every day — no hard limits holding you back")
+                Divider().background(Theme.hairline).padding(.leading, 52)
+                benefit(icon: "brain.head.profile", text: "Full access to Hoot with deeper, richer conversations")
+                Divider().background(Theme.hairline).padding(.leading, 52)
+                benefit(icon: "sparkles",           text: "Cancel anytime — no commitment required")
+            }
         }
         .padding(.vertical, 4)
         .background(Theme.bgElev)
@@ -130,7 +164,7 @@ struct ProView: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text(product.displayName)
+                        Text(isGated ? "Start Free Trial" : product.displayName)
                             .font(.system(size: 16, weight: .semibold))
                         if let savings {
                             Text(savings)
@@ -142,15 +176,21 @@ struct ProView: View {
                                 .clipShape(Capsule())
                         }
                     }
-                    if let trial = product.freeTrialLabel {
+                    if isGated {
+                        Text("Free for 7 days, then \(product.displayPrice) / \(periodLabel(product))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(primary ? .white.opacity(0.85) : Theme.inkSoft)
+                    } else if let trial = product.freeTrialLabel {
                         Text("Includes \(trial)")
                             .font(.system(size: 12))
                             .foregroundStyle(primary ? .white.opacity(0.85) : Theme.inkSoft)
                     }
                 }
                 Spacer()
-                Text(product.displayPrice)
-                    .font(.system(size: 17, weight: .bold))
+                if !isGated {
+                    Text(product.displayPrice)
+                        .font(.system(size: 17, weight: .bold))
+                }
             }
             .foregroundStyle(primary ? .white : Theme.ink)
             .padding(.horizontal, 16)
@@ -165,6 +205,14 @@ struct ProView: View {
         }
         .disabled(storeKit.purchaseInProgress)
         .opacity(storeKit.purchaseInProgress ? 0.6 : 1.0)
+    }
+
+    private func periodLabel(_ product: Product) -> String {
+        switch product.id {
+        case StoreKitManager.annualID:  return "year"
+        case StoreKitManager.monthlyID: return "month"
+        default: return "period"
+        }
     }
 
     private var savingsLabel: String? {
@@ -190,10 +238,17 @@ struct ProView: View {
 
     private var legalFooter: some View {
         VStack(spacing: 10) {
-            Text("Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in Settings → Apple ID → Subscriptions.")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.inkMuted)
-                .multilineTextAlignment(.center)
+            if isGated {
+                Text("After your 7-day free trial, your subscription auto-renews at the price shown unless cancelled at least 24 hours before the trial ends. Manage or cancel in Settings → Apple ID → Subscriptions.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.inkMuted)
+                    .multilineTextAlignment(.center)
+            } else {
+                Text("Subscriptions auto-renew unless cancelled at least 24 hours before the end of the current period. Manage or cancel in Settings → Apple ID → Subscriptions.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.inkMuted)
+                    .multilineTextAlignment(.center)
+            }
             HStack(spacing: 18) {
                 Link("Terms",   destination: URL(string: "https://tutorly-backend-omega.vercel.app/terms")!)
                 Link("Privacy", destination: URL(string: "https://tutorly-backend-omega.vercel.app/privacy")!)
@@ -203,6 +258,8 @@ struct ProView: View {
         }
         .padding(.horizontal, 24)
     }
+
+    // MARK: - Already Pro (upgrade-from-within flow only)
 
     private var alreadyProOverlay: some View {
         ZStack {

@@ -8,6 +8,7 @@ struct SettingsSheet: View {
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
     @State private var showDeleteError = false
+    @State private var storeKit = StoreKitManager.shared
     @AppStorage("aiConsentGiven") private var aiConsentGiven = false
     private var auth: AuthService { AuthService.shared }
 
@@ -45,22 +46,28 @@ struct SettingsSheet: View {
                 }
 
                 Section("Subscription") {
-                    if ProService.shared.isPro {
+                    if storeKit.isInTrial {
+                        Label(trialStatusLabel, systemImage: "gift.fill")
+                            .foregroundStyle(Theme.accent)
+                        if let user = auth.currentUser, user.sessionsRemaining >= 0 {
+                            HStack {
+                                Text("Sessions left today")
+                                Spacer()
+                                Text("\(user.sessionsRemaining) of 3")
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(user.sessionsRemaining == 0 ? .red : .secondary)
+                            }
+                        }
+                        Text("Cancel in Settings → Apple ID → Subscriptions before your trial ends to avoid being charged.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    } else if ProService.shared.isPro {
                         Label("Tutorly Pro — Active", systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
                     } else {
                         Button(action: { showProSheet = true }) {
-                            Label("Upgrade to Pro", systemImage: "sparkles")
+                            Label("Start Free Trial", systemImage: "sparkles")
                                 .foregroundStyle(Theme.accent)
-                        }
-                        if let user = auth.currentUser, user.sessionsRemaining >= 0 {
-                            HStack {
-                                Text("Free sessions remaining")
-                                Spacer()
-                                Text("\(user.sessionsRemaining)")
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(user.sessionsRemaining == 0 ? .red : .secondary)
-                            }
                         }
                     }
                 }
@@ -125,6 +132,14 @@ struct SettingsSheet: View {
             }
         }
         .sheet(isPresented: $showProSheet) { ProView() }
+    }
+
+    // MARK: - Helpers
+
+    private var trialStatusLabel: String {
+        let days = storeKit.trialDaysRemaining
+        if days <= 0 { return "Free Trial — last day" }
+        return days == 1 ? "Free Trial — 1 day remaining" : "Free Trial — \(days) days remaining"
     }
 
     // MARK: - Delete account
